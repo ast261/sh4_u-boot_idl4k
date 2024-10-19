@@ -39,6 +39,12 @@
 #ifdef CONFIG_LPC2292
 #include <asm/arch/hardware.h>
 #endif
+#ifdef CONFIG_SH4
+#include <asm/io.h>
+#include <asm/pio.h>
+#include <asm/socregs.h>
+#include <asm/soc.h>
+#endif
 #include <i2c.h>
 
 #if defined(CONFIG_SOFT_I2C)
@@ -183,6 +189,8 @@ static void send_ack(int ack)
 	I2C_DELAY;
 	I2C_SCL(0);
 	I2C_DELAY;
+	I2C_SDA(1);
+	I2C_DELAY;
 }
 
 
@@ -255,6 +263,7 @@ static uchar read_byte(int ack)
 	data = 0;
 	for(j = 0; j < 8; j++) {
 		I2C_SCL(0);
+		I2C_DELAY;
 		I2C_DELAY;
 		I2C_SCL(1);
 		I2C_DELAY;

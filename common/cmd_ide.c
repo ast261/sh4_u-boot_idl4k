@@ -2,6 +2,9 @@
  * (C) Copyright 2000-2005
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
+ * (C) Copyright 2010 STMicroelectronics.
+ * Sean McGoogan <Sean.McGoogan@st.com>
+ *
  * See file CREDITS for list of people who contributed to this
  * project.
  *
@@ -56,6 +59,10 @@
 #include <asm/io.h>
 #endif
 
+#if defined(CONFIG_SH_STB7100_SATA) && defined(CONFIG_SH_STB7100)
+#include <asm/stb7100reg.h>
+#endif
+
 #ifdef CONFIG_IDE_8xx_DIRECT
 DECLARE_GLOBAL_DATA_PTR;
 #endif
@@ -66,6 +73,12 @@ DECLARE_GLOBAL_DATA_PTR;
 #else
 # define EIEIO		/* nothing */
 # define SYNC		/* nothing */
+#endif
+
+#if defined(__GNUC__) && !defined(__STRICT_ANSI__)
+#define INT64(X) X##LL	/* explicit qualification, to avoid warnings */
+#else
+#define INT64(X) X
 #endif
 
 #ifdef CONFIG_IDE_8xx_DIRECT
@@ -805,7 +818,7 @@ __ide_outb(int dev, int port, unsigned char val)
 		dev, port, val, (ATA_CURR_BASE(dev)+CFG_ATA_PORT_ADDR(port)));
 	outb(val, (ATA_CURR_BASE(dev)+CFG_ATA_PORT_ADDR(port)));
 }
-void inline ide_outb (int dev, int port, unsigned char val)
+void ide_outb (int dev, int port, unsigned char val)
 		__attribute__((weak, alias("__ide_outb")));
 
 unsigned char inline
@@ -817,7 +830,7 @@ __ide_inb(int dev, int port)
 		dev, port, (ATA_CURR_BASE(dev)+CFG_ATA_PORT_ADDR(port)), val);
 	return val;
 }
-unsigned char inline ide_inb(int dev, int port)
+unsigned char ide_inb(int dev, int port)
 			__attribute__((weak, alias("__ide_inb")));
 
 #ifdef __PPC__
@@ -930,6 +943,23 @@ output_data(int dev, ulong *sect_buf, int words)
 	}
 #endif
 }
+#elif defined(CONFIG_SH_STB7100_SATA) && defined(CONFIG_SH_STB7100)
+static void
+output_data(int dev, ulong *sect_buf, int words)
+{
+	int count = words<<1;
+	const unsigned short *buf = (unsigned short *)sect_buf;
+	DECLARE_GLOBAL_DATA_PTR;
+	bd_t *bd = gd->bd;
+	if (STB7100_DEVICEID_7109(bd->bi_devid) && (STB7100_DEVICEID_CUT(bd->bi_devid) >= 2))
+	{
+		while (count--)
+			writew(*buf++, ATA_CURR_BASE(dev)+ATA_DATA_REG);
+	} else {
+		while (count--)
+			writel(*buf++, ATA_CURR_BASE(dev)+ATA_DATA_REG);
+	}
+}
 #else	/* ! __PPC__ */
 static void
 output_data(int dev, ulong *sect_buf, int words)
@@ -988,6 +1018,26 @@ input_data(int dev, ulong *sect_buf, int words)
 	}
 #endif
 }
+#elif defined(CONFIG_SH_STB7100_SATA) && defined(CONFIG_SH_STB7100)
+static void
+input_data(int dev, ulong *sect_buf, int words)
+{
+		/* to workaround strict aliasing issues */
+	typedef unsigned short __attribute__((__may_alias__)) ushort_any;
+	ushort_any *buf = (ushort_any *)sect_buf;
+
+	int count = words << 1;
+	DECLARE_GLOBAL_DATA_PTR;
+	bd_t *bd = gd->bd;
+	if (STB7100_DEVICEID_7109(bd->bi_devid) && (STB7100_DEVICEID_CUT(bd->bi_devid) >= 2))
+	{
+		while (count--)
+		  *buf++ = readw(ATA_CURR_BASE(dev)+ATA_DATA_REG);
+	} else {
+		while (count--)
+		  *buf++ = readl(ATA_CURR_BASE(dev)+ATA_DATA_REG);
+	}
+}
 #else	/* ! __PPC__ */
 static void
 input_data(int dev, ulong *sect_buf, int words)
@@ -1040,6 +1090,7 @@ static void ide_ident (block_dev_desc_t *dev_desc)
 	int mode, cycle_time;
 #endif
 	int device;
+retry:
 	device=dev_desc->dev;
 	printf ("  Device %d: ", device);
 
@@ -1130,6 +1181,35 @@ static void ide_ident (block_dev_desc_t *dev_desc)
 
 	input_swap_data (device, iobuf, ATA_SECTORWORDS);
 
+	debug ("info: IDENTIFY DEVICE has word[0] = 0x%04x\n", iop->config);
+	debug ("info: IDENTIFY DEVICE has word[2] = 0x%04x\n", iop->reserved2);
+	if (iop->config & 1<<2)	/* word[0],bit[2] == "Response Incomplete" */
+	{
+		printf ("\nwarning: IDENTIFY DEVICE command was INcomplete!\n");
+	}
+
+	switch (iop->reserved2)	/* check word[2] */
+	{
+		case 0x37c8:	/* IDENTIFY DEVICE command is INcomplete */
+		case 0x738c:	/* IDENTIFY DEVICE command is complete */
+			printf ("warning: device is spun-down!\n");
+				/* device is spun down, so spin it up */
+			printf ("info: trying to spin up the device ...\n");
+				/* enable Power-Up in Standby Feature */
+			ide_outb (device, ATA_DEV_HD, ATA_LBA | ATA_DEVICE(device));
+			ide_outb (device, ATA_FEATURES, 0x07);
+			ide_outb (device, ATA_COMMAND, ATA_CMD_SETF);
+			ide_wait (device, IDE_SPIN_UP_TIME_OUT);	/* may take up to 5 sec */
+			goto retry;
+			break;
+		case 0x8c73:	/* IDENTIFY DEVICE command is INcomplete */
+		case 0xc837:	/* IDENTIFY DEVICE command is complete */
+			debug ("info: device is already spun-up\n");
+			break;
+		default:
+			printf ("error: word[2] has a 'reserved' value!\n");
+	}
+
 	ident_cpy ((unsigned char*)dev_desc->revision, iop->fw_rev, sizeof(dev_desc->revision));
 	ident_cpy ((unsigned char*)dev_desc->vendor, iop->model, sizeof(dev_desc->vendor));
 	ident_cpy ((unsigned char*)dev_desc->product, iop->serial_no, sizeof(dev_desc->product));
@@ -1142,8 +1222,8 @@ static void ide_ident (block_dev_desc_t *dev_desc)
 	 * 6.2.1.6: Identfy Drive, Table 39 for more details
 	 */
 
-	strswab (dev_desc->revision);
-	strswab (dev_desc->vendor);
+	strswab ((char*)dev_desc->revision);
+	strswab ((char*)dev_desc->vendor);
 #endif /* __LITTLE_ENDIAN */
 
 	if ((iop->config & 0x0080)==0x0080)
@@ -1242,7 +1322,7 @@ ulong ide_read (int device, lbaint_t blknr, ulong blkcnt, void *buffer)
 #ifdef CONFIG_LBA48
 	unsigned char lba48 = 0;
 
-	if (blknr & 0x0000fffff0000000) {
+	if (blknr & INT64(0x0000fffff0000000)) {
 		/* more than 28 bits used, use 48bit mode */
 		lba48 = 1;
 	}
@@ -1361,7 +1441,7 @@ ulong ide_write (int device, lbaint_t blknr, ulong blkcnt, void *buffer)
 #ifdef CONFIG_LBA48
 	unsigned char lba48 = 0;
 
-	if (blknr & 0x0000fffff0000000) {
+	if (blknr & INT64(0x0000fffff0000000)) {
 		/* more than 28 bits used, use 48bit mode */
 		lba48 = 1;
 	}
@@ -1752,7 +1832,7 @@ unsigned char atapi_issue(int device,unsigned char* ccb,int ccblen, unsigned cha
 	}
 
 	output_data_shorts (device, (unsigned short *)ccb,ccblen/2); /* write command block */
- 	/* ATAPI Command written wait for completition */
+	/* ATAPI Command written wait for completition */
 	udelay (5000); /* device must set bsy */
 
 	mask = ATA_STAT_DRQ|ATA_STAT_BUSY|ATA_STAT_ERR;

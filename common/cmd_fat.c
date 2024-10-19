@@ -44,6 +44,10 @@ int do_fat_fsload (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 	int part=1;
 	char *ep;
 
+#ifdef CUSTOM_SHOW_FATLOAD_PROGRESS
+	custom_fatload_show_start();
+#endif
+
 	if (argc < 5) {
 		printf ("usage: fatload <interface> <dev[:part]> <addr> <filename> [bytes]\n");
 		return 1;
@@ -82,6 +86,9 @@ int do_fat_fsload (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 	sprintf(buf, "%lX", size);
 	setenv("filesize", buf);
 
+#ifdef CUSTOM_SHOW_FATLOAD_PROGRESS
+	custom_fatload_show_end();
+#endif
 	return 0;
 }
 

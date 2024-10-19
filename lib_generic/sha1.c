@@ -29,8 +29,13 @@
 #define _CRT_SECURE_NO_DEPRECATE 1
 #endif
 
+#ifdef USE_HOSTCC
+#include <string.h>
+#else
 #include <linux/string.h>
-#include "sha1.h"
+#endif
+
+#include "../include/sha1.h"
 
 /*
  * 32-bit integer manipulation macros (big endian)

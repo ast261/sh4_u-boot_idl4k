@@ -151,6 +151,25 @@ gd_t *global_data;
 		:					\
 		: "i"(offsetof(gd_t, jt)), "i"(XF_ ##x)	\
 		: "r8");
+#elif defined(CONFIG_SH4)
+/*
+ * r13 holds the pointer to the global_data (read-only).
+ * r0 & r1 are call-clobbered (clobbered).
+ */
+#define EXPORT_FUNC(x)				\
+	asm volatile (				\
+"	.globl " #x "\n"			\
+#x ":\n"					\
+"	mov	%[jt], r0\n"			\
+"	mov.l	@(r0, r13), r1\n"		\
+"	mov	%[func], r0\n"			\
+"	mov.l	@(r0, r1), r0\n"		\
+"	jmp	@r0\n"				\
+"	  nop\n"				\
+	: /* No outputs */			\
+	: [jt]   "i"(offsetof(gd_t, jt)),	\
+	  [func] "i"(XF_ ## x * sizeof(void *))	\
+	: "r0", "r1");
 #else
 #error stubs definition missing for this architecture
 #endif
@@ -189,3 +208,4 @@ void app_startup(char **argv)
 }
 
 #undef EXPORT_FUNC
+

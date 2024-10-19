@@ -2,6 +2,9 @@
  * (C) Copyright 2003
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
+ * (C) Copyright 2009-2011 STMicroelectronics.
+ * Sean McGoogan <Sean.McGoogan@st.com>
+ *
  * See file CREDITS for list of people who contributed to this
  * project.
  *
@@ -31,6 +34,10 @@
 DECLARE_GLOBAL_DATA_PTR;
 
 static void print_num(const char *, ulong);
+#if defined(CONFIG_SH4)
+static void print_mem(const char *, ulong);
+static void print_mhz(const char *name, ulong value);
+#endif
 
 #ifndef CONFIG_ARM	/* PowerPC and other */
 
@@ -271,7 +278,152 @@ int do_bdinfo ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 	return 0;
 }
 
-#else /* ! PPC, which leaves MIPS */
+#elif defined(CONFIG_SH4)
+
+#include "asm/socregs.h"
+
+#if !defined(CONFIG_CMD_BDI_DUMP_EMI_BANKS)
+#define CONFIG_CMD_BDI_DUMP_EMI_BANKS 1
+#endif
+
+int do_bdinfo ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+{
+	DECLARE_GLOBAL_DATA_PTR;
+#if CONFIG_CMD_BDI_DUMP_EMI_BANKS
+	#if !defined(ST40_EMI_SIZE)
+	#define ST40_EMI_SIZE	(128 << 20)	/* EMI is usually 128 MiB */
+	#endif	/* ST40_EMI_SIZE */
+	#define MAX_EMI_BANKS	6	/* Maximum of 6 EMI Banks */
+	const u32 emi_base = 0xa0000000u;
+	u32 base[MAX_EMI_BANKS+1];	/* Base address for each bank */
+	u32 enabled;			/* number of enabled EMI banks */
+#endif	/* CONFIG_CMD_BDI_DUMP_EMI_BANKS */
+#if defined(CONFIG_CMD_NET) || CONFIG_CMD_BDI_DUMP_EMI_BANKS
+	unsigned int i;
+#endif
+	bd_t *bd = gd->bd;
+
+	print_num ("boot_params",	(ulong)bd->bi_boot_params);
+	print_num ("memstart",		(ulong)bd->bi_memstart);
+	print_mem ("memsize",		(ulong)bd->bi_memsize);
+#ifndef CFG_NO_FLASH
+	print_num ("flashstart",	(ulong)bd->bi_flashstart);
+	print_mem ("flashsize",		(ulong)bd->bi_flashsize);
+	print_num ("flashoffset",	(ulong)bd->bi_flashoffset);
+#endif /* CFG_NO_FLASH */
+
+#if defined(CONFIG_CMD_NET)
+	puts ("ethaddr     =");
+	for (i=0; i<6; ++i) {
+		printf ("%c%02X", i ? ':' : ' ', bd->bi_enetaddr[i]);
+	}
+	puts ("\nip_addr     = ");
+	print_IPaddr (bd->bi_ip_addr);
+#endif
+	printf ("\nbaudrate    = %d bps\n", bd->bi_baudrate);
+
+#if defined(CONFIG_SH_STB7100)
+	if (STB7100_DEVICEID_7109(bd->bi_devid))
+		printf ("\nSTb7109 version %ld.x", STB7100_DEVICEID_CUT(bd->bi_devid));
+	else if (STB7100_DEVICEID_7100(bd->bi_devid))
+		printf ("\nSTb7100 version %ld.x", STB7100_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX5197)
+	if (STX5197_DEVICEID_5197(bd->bi_devid))
+		printf ("\nSTx5197 version %ld.x", STX5197_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX5206)
+	if (STX5206_DEVICEID_5206(bd->bi_devid))
+		printf ("\nSTx5206/STx5289 version %ld.x", STX5206_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX7105)
+	if (STX7105_DEVICEID_7105(bd->bi_devid))
+		printf ("\nSTx7105 version %ld.x", STX7105_DEVICEID_CUT(bd->bi_devid));
+	else if (STX7105_DEVICEID_7106(bd->bi_devid))
+		printf ("\nSTx7106 version %ld.x", STX7105_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX7108)
+	if (STX7108_DEVICEID_7108(bd->bi_devid))
+		printf ("\nSTx7108 version %ld.x", STX7108_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX7111)
+	if (STX7111_DEVICEID_7111(bd->bi_devid))
+		printf ("\nSTx7111 version %ld.x", STX7111_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX7141)
+	if (STX7141_DEVICEID_7141(bd->bi_devid))
+		printf ("\nSTx7141 version %ld.x", STX7141_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_STX7200)
+	if (STX7200_DEVICEID_7200(bd->bi_devid))
+		printf ("\nSTx7200 version %ld.x", STX7200_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_FLI7510)
+	if (FLI7510_DEVICEID_7510(bd->bi_devid))
+		printf ("\nFLI7510 version %ld.x", FLI7510_DEVICEID_CUT(bd->bi_devid));
+#elif defined(CONFIG_SH_FLI7540)
+	if (FLI7540_DEVICEID_7540(bd->bi_devid))
+		printf ("\nFLI7540 version %ld.x", FLI7540_DEVICEID_CUT(bd->bi_devid));
+#else
+#error Missing Device Definitions!
+#endif
+	else
+		printf ("\nUnknown device! (id=0x%08lx)", bd->bi_devid);
+
+#ifdef CONFIG_SH_SE_MODE
+	printf ("  [32-bit mode]\n");
+#else
+	printf ("  [29-bit mode]\n");
+#endif
+
+#ifdef CONFIG_SH_STB7100
+	print_mhz ("PLL0",		bd->bi_pll0frq);
+	print_mhz ("PLL1",		bd->bi_pll1frq);
+	print_mhz ("ST40  CPU",		bd->bi_st40cpufrq);
+	print_mhz ("ST40  BUS",		bd->bi_st40busfrq);
+	print_mhz ("ST40  PER",		bd->bi_st40perfrq);
+	print_mhz ("ST231 CPU",		bd->bi_st231frq);
+	print_mhz ("ST BUS",		bd->bi_stbusfrq);
+	print_mhz ("EMI",		bd->bi_emifrq);
+	print_mhz ("LMI",		bd->bi_lmifrq);
+#else
+	print_mhz ("EMI",		bd->bi_emifrq);
+#endif	/* CONFIG_SH_STB7100 */
+
+#if CONFIG_CMD_BDI_DUMP_EMI_BANKS
+	enabled = *ST40_EMI_BANK_ENABLE;
+	printf("#EMI Banks  = %u\n", enabled);
+	if (enabled > MAX_EMI_BANKS)
+	{
+		printf("Error: Maximum Number of Enabled Banks should be %u\n", MAX_EMI_BANKS);
+		enabled = MAX_EMI_BANKS;
+	}
+
+	/*
+	 * EmiBaseAddress[5:0] == Address[27:22] (Multiple of 4MiB)
+	 *
+	 * Retreive all the configured EMI bank bases into base[].
+	 */
+	for(i=0; i<enabled; i++)
+	{
+		const u32 start = *ST40_EMI_BASEADDRESS(i) & 0x3fu;
+		base[i] = emi_base + (start << (22));
+	}
+	/* last valid bank occupies all remaining space */
+	base[i] = emi_base + ST40_EMI_SIZE;	/* total size of EMI is usually 128MiB */
+
+	/*
+	 * Print out the ranges of each bank.
+	 */
+	for(i=0; i<enabled; i++)
+	{
+		const u32 lower = base[i];
+		const u32 upper = base[i+1];
+		printf ("EMI #%u CS%c  = 0x%08X ... 0x%08X (",
+			i,
+			'A' + i,
+			lower,
+			upper-1u);
+		print_size (upper-lower, ")\n");
+	}
+#endif	/* CONFIG_CMD_BDI_DUMP_EMI_BANKS */
+
+	return 0;
+}
+
+#else /* ! SH4 || PPC, which leaves MIPS */
 
 int do_bdinfo ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
 {
@@ -333,6 +485,18 @@ static void print_num(const char *name, ulong value)
 {
 	printf ("%-12s= 0x%08lX\n", name, value);
 }
+
+#if defined(CONFIG_SH4)
+static void print_mem(const char *name, ulong value)
+{
+	printf ("%-12s= 0x%08lX\t(", name, value);
+	print_size (value, ")\n");
+}
+static void print_mhz(const char *name, ulong value)
+{
+	printf ("%-12s= %3lu MHz\n", name, value);
+}
+#endif
 
 #if defined(CONFIG_PPC) || defined(CONFIG_M68K)
 static void print_str(const char *name, const char *str)

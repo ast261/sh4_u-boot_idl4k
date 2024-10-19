@@ -348,7 +348,7 @@ unsigned long flash_init (void)
 		size += flash_info[i].size = flash_get_size (bank_base[i], i);
 		if (flash_info[i].flash_id == FLASH_UNKNOWN) {
 #ifndef CFG_FLASH_QUIET_TEST
-			printf ("## Unknown FLASH on Bank %d - Size = 0x%08lx = %ld MB\n",
+			printf ("## Unknown FLASH on Bank %d - Size = 0x%08lx = %ld MiB\n",
 				i+1, flash_info[i].size, flash_info[i].size << 20);
 #endif /* CFG_FLASH_QUIET_TEST */
 		}
@@ -497,8 +497,10 @@ int flash_erase (flash_info_t * info, int s_first, int s_last)
 			if (flash_full_status_check
 			    (info, sect, info->erase_blk_tout, "erase")) {
 				rcode = 1;
-			} else
+			} else {
+				flash_write_cmd (info, sect, 0, info->cmd_reset);
 				putc ('.');
+			}
 		}
 	}
 	puts (" done\n");
@@ -518,7 +520,7 @@ void flash_print_info (flash_info_t * info)
 
 	printf ("CFI conformant FLASH (%d x %d)",
 		(info->portwidth << 3), (info->chipwidth << 3));
-	printf ("  Size: %ld MB in %d Sectors\n",
+	printf ("  Size: %ld MiB in %d Sectors\n",
 		info->size >> 20, info->sector_count);
 	printf ("  ");
 	switch (info->vendor) {
@@ -561,6 +563,9 @@ void flash_print_info (flash_info_t * info)
 		int size;
 		int erased;
 		volatile unsigned long *flash;
+
+		/* make sure the sector is in read mode first */
+		flash_write_cmd (info, i, 0, info->cmd_reset);
 
 		/*
 		 * Check if whole sector is erased
@@ -607,6 +612,7 @@ int write_buff (flash_info_t * info, uchar * src, ulong addr, ulong cnt)
 	int aln;
 	cfiword_t cword;
 	int i, rc;
+	const ulong dot_stride = 16ul << 10;	/* 16 KiB */
 
 #ifdef CFG_FLASH_USE_BUFFER_WRITE
 	int buffered_size;
@@ -672,6 +678,10 @@ int write_buff (flash_info_t * info, uchar * src, ulong addr, ulong cnt)
 			return rc;
 		wp += info->portwidth;
 		cnt -= info->portwidth;
+		/* print a dot every 'dot_stride' bytes */
+		/* Note: dependant on alignment may print one too many */
+		if ((wp % dot_stride) == 0x0ul)
+			putc ('.');
 	}
 #endif /* CFG_FLASH_USE_BUFFER_WRITE */
 	if (cnt == 0) {
@@ -727,6 +737,7 @@ int flash_real_protect (flash_info_t * info, long sector, int prot)
 			}
 		}
 	}
+	flash_write_cmd (info, sector, 0, info->cmd_reset);
 	return retcode;
 }
 
@@ -924,6 +935,19 @@ static void flash_write_cmd (flash_info_t * info, flash_sect_t sect, uint offset
 
 	volatile cfiptr_t addr;
 	cfiword_t cword;
+
+	/*
+	 *	We need to ensure that sizeof(cword) >= info->portwidth,
+	 *	otherwise, flash_make_cmd() will scribble over memory
+	 *	it should not! This results in a stack corruption,
+	 *	and madness follows...	Sean McGoogan 2009-08-20.
+	 */
+	if ( info->portwidth > sizeof(cword) ) {
+		printf("ERROR: %s() ignoring write request (info->portwidth=%u)\n",
+			__FUNCTION__,
+			info->portwidth);
+		return;
+	}
 
 	addr.cp = flash_make_addr (info, sect, offset);
 	flash_make_cmd (info, cmd, &cword);
@@ -1141,7 +1165,7 @@ static int flash_detect_cfi (flash_info_t * info)
 		for (info->chipwidth = FLASH_CFI_BY8;
 		     info->chipwidth <= info->portwidth;
 		     info->chipwidth <<= 1) {
-			flash_write_cmd (info, 0, 0, info->cmd_reset);
+			flash_write_cmd (info, 0, 0, FLASH_CMD_RESET);
 			for (cfi_offset=0; cfi_offset < sizeof(flash_offset_cfi)/sizeof(uint); cfi_offset++) {
 				flash_write_cmd (info, 0, flash_offset_cfi[cfi_offset], FLASH_CMD_CFI);
 				if (flash_isequal (info, 0, FLASH_OFFSET_CFI_RESP, 'Q')
@@ -1267,6 +1291,7 @@ ulong flash_get_size (ulong base, int banknum)
 					num_erase_regions, NUM_ERASE_REGIONS);
 				break;
 			}
+
 			if (geometry_reversed)
 				tmp = flash_read_long (info, 0,
 					       FLASH_OFFSET_ERASE_REGIONS +
@@ -1281,6 +1306,20 @@ ulong flash_get_size (ulong base, int banknum)
 			erase_region_count = (tmp & 0xffff) + 1;
 			debug ("erase_region_count = %d erase_region_size = %d\n",
 				erase_region_count, erase_region_size);
+
+				/*
+				 * ensure we do not violate array bounds, specifically:
+				 *	flash_info_t.start[CFG_MAX_FLASH_SECT];
+				 *	flash_info_t.protect[CFG_MAX_FLASH_SECT];
+				 */
+			if (erase_region_count > CFG_MAX_FLASH_SECT) {
+				printf ("Error: Number of Sectors (%d) > CFG_MAX_FLASH_SECT (%d)\n",
+					erase_region_count,
+					CFG_MAX_FLASH_SECT);
+				flash_write_cmd (info, 0, 0, info->cmd_reset);
+				return 0;	/* return, to avoid corrupting any memory */
+			}
+
 			for (j = 0; j < erase_region_count; j++) {
 				info->start[sect_cnt] = sector;
 				sector += (erase_region_size * size_ratio);
@@ -1291,10 +1330,20 @@ ulong flash_get_size (ulong base, int banknum)
 				switch (info->vendor) {
 				case CFI_CMDSET_INTEL_EXTENDED:
 				case CFI_CMDSET_INTEL_STANDARD:
+					/* for multi-bank devices, the READ_ID command
+					 * must be issued on a per sector basis */
+					flash_write_cmd (info, sect_cnt,
+                                                         info->cfi_offset,
+                                                         FLASH_CMD_READ_ID);
 					info->protect[sect_cnt] =
 						flash_isset (info, sect_cnt,
 							     FLASH_OFFSET_PROTECT,
 							     FLASH_STATUS_PROTECT);
+					/* for multi-bank devices, the RESET command
+					 * must be issued on a per sector basis */
+					flash_write_cmd (info, sect_cnt,
+                                                         info->cfi_offset,
+                                                         FLASH_CMD_RESET);
 					break;
 				default:
 					info->protect[sect_cnt] = 0; /* default: not protected */
@@ -1302,6 +1351,11 @@ ulong flash_get_size (ulong base, int banknum)
 
 				sect_cnt++;
 			}
+                        switch (info->vendor) {
+                        case CFI_CMDSET_INTEL_EXTENDED:
+                        case CFI_CMDSET_INTEL_STANDARD:
+                            flash_write_cmd (info, 0, info->cfi_offset, FLASH_CMD_CFI);
+                        }
 		}
 
 		info->sector_count = sect_cnt;
@@ -1346,12 +1400,17 @@ static flash_sect_t find_sector (flash_info_t * info, ulong addr)
 static int flash_write_cfiword (flash_info_t * info, ulong dest,
 				cfiword_t cword)
 {
+	flash_sect_t sector;
 	cfiptr_t ctladdr;
 	cfiptr_t cptr;
-	int flag;
+	int flag, retcode;
 
 	ctladdr.cp = flash_make_addr (info, 0, 0);
 	cptr.cp = (uchar *) dest;
+
+	/* put the flash in read mode */
+	sector = find_sector (info, dest);
+	flash_write_cmd (info, sector, 0, info->cmd_reset);
 
 	/* Check if Flash is (sufficiently) erased */
 	switch (info->portwidth) {
@@ -1379,8 +1438,8 @@ static int flash_write_cfiword (flash_info_t * info, ulong dest,
 	switch (info->vendor) {
 	case CFI_CMDSET_INTEL_EXTENDED:
 	case CFI_CMDSET_INTEL_STANDARD:
-		flash_write_cmd (info, 0, 0, FLASH_CMD_CLEAR_STATUS);
-		flash_write_cmd (info, 0, 0, FLASH_CMD_WRITE);
+		flash_write_cmd (info, sector, 0, FLASH_CMD_CLEAR_STATUS);
+		flash_write_cmd (info, sector, 0, FLASH_CMD_WRITE);
 		break;
 	case CFI_CMDSET_AMD_EXTENDED:
 	case CFI_CMDSET_AMD_STANDARD:
@@ -1408,8 +1467,10 @@ static int flash_write_cfiword (flash_info_t * info, ulong dest,
 	if (flag)
 		enable_interrupts ();
 
-	return flash_full_status_check (info, find_sector (info, dest),
+	retcode = flash_full_status_check (info, sector,
 					info->write_tout, "write");
+	flash_write_cmd (info, sector, 0, info->cmd_reset);
+	return retcode;
 }
 
 #ifdef CFG_FLASH_USE_BUFFER_WRITE
@@ -1429,6 +1490,7 @@ static int flash_write_cfibuffer (flash_info_t * info, ulong dest, uchar * cp,
 		src.cp = cp;
 		dst.cp = (uchar *) dest;
 		sector = find_sector (info, dest);
+		flash_write_cmd (info, sector, 0, FLASH_CMD_RESET);
 		flash_write_cmd (info, sector, 0, FLASH_CMD_CLEAR_STATUS);
 		flash_write_cmd (info, sector, 0, FLASH_CMD_WRITE_TO_BUFFER);
 		if ((retcode = flash_status_check (info, sector, info->buffer_write_tout,
@@ -1477,6 +1539,7 @@ static int flash_write_cfibuffer (flash_info_t * info, ulong dest, uchar * cp,
 							   info->buffer_write_tout,
 							   "buffer write");
 		}
+		flash_write_cmd (info, sector, 0, FLASH_CMD_RESET);
 		return retcode;
 
 	case CFI_CMDSET_AMD_STANDARD:

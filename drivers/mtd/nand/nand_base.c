@@ -11,6 +11,8 @@
  *
  *  Copyright (C) 2000 Steven J. Hill (sjhill@realitydiluted.com)
  * 		  2002 Thomas Gleixner (tglx@linutronix.de)
+ *		  2009-2011 STMicroelectronics. (Sean McGoogan <Sean.McGoogan@st.com>)
+ *
  *
  *  02-08-2004  tglx: support for strange chips, which cannot auto increment
  *		pages on read / read_oob
@@ -27,6 +29,13 @@
  *  09-24-2004  tglx: add support for hardware controllers (e.g. ECC) shared
  *		among multiple independend devices. Suggestions and initial patch
  *		from Ben Dooks <ben-mtd@fluff.org>
+ *
+ *  02-06-2009  SMG: added support for 3 bytes of ECC per 128 byte record.
+ *
+ *  09-28-2011  SMG: added support for 7 bytes of ECC per 512 byte record (AFM4)
+ *
+ *  09-29-2011  SMG: Added call-back of stm_nand_chip_init() to complete the
+ *		initialization of the device structures, POST-probing.
  *
  * Credits:
  *	David Woodhouse for adding multichip support
@@ -88,6 +97,10 @@
 #include <jffs2/jffs2.h>
 #endif
 
+#if defined(CONFIG_SH4)
+#include <asm/stm-nand.h>
+#endif
+
 /* Define default oob placement schemes for large and small page devices */
 static struct nand_oobinfo nand_oob_8 = {
 	.useecc = MTD_NANDECC_AUTOPLACE,
@@ -113,6 +126,38 @@ static struct nand_oobinfo nand_oob_64 = {
 	.oobfree = { {2, 38} }
 };
 
+	/* For Micron MT29F2G08ABAEA.
+	 * The 64-byte OOB is divided into 4 identical records.
+	 *
+	 * Each 16-byte record has the following layout:
+	 *	0x00 - 0x01 : Reserved (for Bad Block Markers)
+	 *	0x02 - 0x03 : User Metadata II (unprotected)
+	 *	0x04 - 0x07 : User Metadata I  (protected)
+	 *	0x08 - 0x0f : ECC for main + Metadata I regions
+	 *
+	 * We will *only* use the UN-protected bytes for Metadata, as modifying
+	 * these bytes does *not* affect the ECC bytes, which may require
+	 * the entire block to be erased if there are any 0->1 transitions.
+	 * This means there are 4*4 (16) bytes of OOB that are "unusable".
+	 */
+static struct nand_oobinfo nand_oob_64_MT29F_on_die_ecc = {
+	.useecc = MTD_NANDECC_AUTOPLACE,
+	.eccbytes = 32,			/* 32 out of 64 bytes = 50% of OOB */
+	/* .reserved = { {0x00, 2}, {0x10, 2}, {0x20, 2}, {0x30, 2} }, */
+	.oobfree = {
+		{0x02, 2},	/* 2 ECC-unprotected bytes in Record #0 */
+		{0x12, 2},	/* 2 ECC-unprotected bytes in Record #1 */
+		{0x22, 2},	/* 2 ECC-unprotected bytes in Record #2 */
+		{0x32, 2}	/* 2 ECC-unprotected bytes in Record #3 */
+	},			/* only 8 ECC-unprotected bytes in the OOB */
+	/* .unusable = { {0x04, 4}, {0x14, 4}, {0x24, 4}, {0x34, 4} }, */
+	.eccpos = {
+		0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,	/* 512-byte Record #0 */
+		0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,	/* 512-byte Record #1 */
+		0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,	/* 512-byte Record #2 */
+		0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f}	/* 512-byte Record #3 */
+};
+
 /* This is used for padding purposes in nand_write_oob */
 static u_char ffchars[] = {
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -133,13 +178,8 @@ static void nand_read_buf(struct mtd_info *mtd, u_char *buf, int len);
 static int nand_verify_buf(struct mtd_info *mtd, const u_char *buf, int len);
 
 static int nand_read (struct mtd_info *mtd, loff_t from, size_t len, size_t * retlen, u_char * buf);
-static int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
-			  size_t * retlen, u_char * buf, u_char * eccbuf, struct nand_oobinfo *oobsel);
-static int nand_read_oob (struct mtd_info *mtd, loff_t from, size_t len, size_t * retlen, u_char * buf);
 static int nand_write (struct mtd_info *mtd, loff_t to, size_t len, size_t * retlen, const u_char * buf);
-static int nand_write_ecc (struct mtd_info *mtd, loff_t to, size_t len,
-			   size_t * retlen, const u_char * buf, u_char * eccbuf, struct nand_oobinfo *oobsel);
-static int nand_write_oob (struct mtd_info *mtd, loff_t to, size_t len, size_t * retlen, const u_char *buf);
+
 /* XXX U-BOOT XXX */
 #if 0
 static int nand_writev (struct mtd_info *mtd, const struct kvec *vecs,
@@ -538,6 +578,11 @@ static void nand_command (struct mtd_info *mtd, unsigned command, int column, in
 {
 	register struct nand_chip *this = mtd->priv;
 
+#if 0									/* QQQ - DELETE */
+	printf("QQQ: %s( command=0x%02x,  column=0x%x,  page=0x%x\n",	/* QQQ - DELETE */
+		__FUNCTION__, command, column, page_addr);		/* QQQ - DELETE */
+#endif									/* QQQ - DELETE */
+
 	/* Begin command latch cycle */
 	this->hwcontrol(mtd, NAND_CTL_SETCLE);
 	/*
@@ -569,10 +614,16 @@ static void nand_command (struct mtd_info *mtd, unsigned command, int column, in
 
 		/* Serially input address */
 		if (column != -1) {
-			/* Adjust columns for 16 bit buswidth */
-			if (this->options & NAND_BUSWIDTH_16)
-				column >>= 1;
-			this->write_byte(mtd, column);
+			if (command == NAND_CMD_SETFEATURES) {
+				/* write out the FA (Feature Address) */
+				this->write_byte(mtd, column & 0xff);
+				ndelay(70);	/* tADL = 70ns */
+			} else {
+				/* Adjust columns for 16 bit buswidth */
+				if (this->options & NAND_BUSWIDTH_16)
+					column >>= 1;
+				this->write_byte(mtd, column);
+			}
 		}
 		if (page_addr != -1) {
 			this->write_byte(mtd, (unsigned char) (page_addr & 0xff));
@@ -596,6 +647,7 @@ static void nand_command (struct mtd_info *mtd, unsigned command, int column, in
 	case NAND_CMD_ERASE2:
 	case NAND_CMD_SEQIN:
 	case NAND_CMD_STATUS:
+	case NAND_CMD_SETFEATURES:
 		return;
 
 	case NAND_CMD_RESET:
@@ -643,6 +695,11 @@ static void nand_command_lp (struct mtd_info *mtd, unsigned command, int column,
 {
 	register struct nand_chip *this = mtd->priv;
 
+#if 0									/* QQQ - DELETE */
+	printf("QQQ: %s( command=0x%02x,  column=0x%x,  page=0x%x\n",	/* QQQ - DELETE */
+		__FUNCTION__, command, column, page_addr);		/* QQQ - DELETE */
+#endif									/* QQQ - DELETE */
+
 	/* Emulate NAND_CMD_READOOB */
 	if (command == NAND_CMD_READOOB) {
 		column += mtd->oobblock;
@@ -662,11 +719,17 @@ static void nand_command_lp (struct mtd_info *mtd, unsigned command, int column,
 
 		/* Serially input address */
 		if (column != -1) {
-			/* Adjust columns for 16 bit buswidth */
-			if (this->options & NAND_BUSWIDTH_16)
-				column >>= 1;
-			this->write_byte(mtd, column & 0xff);
-			this->write_byte(mtd, column >> 8);
+			if (command == NAND_CMD_SETFEATURES) {
+				/* write out the FA (Feature Address) */
+				this->write_byte(mtd, column & 0xff);
+				ndelay(70);	/* tADL = 70ns */
+			} else {
+				/* Adjust columns for 16 bit buswidth */
+				if (this->options & NAND_BUSWIDTH_16)
+					column >>= 1;
+				this->write_byte(mtd, column & 0xff);
+				this->write_byte(mtd, column >> 8);
+			}
 		}
 		if (page_addr != -1) {
 			this->write_byte(mtd, (unsigned char) (page_addr & 0xff));
@@ -691,6 +754,7 @@ static void nand_command_lp (struct mtd_info *mtd, unsigned command, int column,
 	case NAND_CMD_ERASE2:
 	case NAND_CMD_SEQIN:
 	case NAND_CMD_STATUS:
+	case NAND_CMD_SETFEATURES:
 		return;
 
 
@@ -891,7 +955,7 @@ static int nand_write_page (struct mtd_info *mtd, struct nand_chip *this, int pa
 	u_char *oob_buf,  struct nand_oobinfo *oobsel, int cached)
 {
 	int 	i, status;
-	u_char	ecc_code[32];
+	u_char	ecc_code[MTD_NANDECC_MAX_ECCPOS];
 	int	eccmode = oobsel->useecc ? this->eccmode : NAND_ECC_NONE;
 	uint  	*oob_config = oobsel->eccpos;
 	int	datidx = 0, eccidx = 0, eccsteps = this->eccsteps;
@@ -907,7 +971,8 @@ static int nand_write_page (struct mtd_info *mtd, struct nand_chip *this, int pa
 	switch (eccmode) {
 	/* No ecc, write all */
 	case NAND_ECC_NONE:
-		printk (KERN_WARNING "Writing data without ECC to NAND-FLASH is not recommended\n");
+		if (!this->is_on_die_ecc)
+			printk (KERN_WARNING "Writing data without ECC to NAND-FLASH is not recommended\n");
 		this->write_buf(mtd, this->data_poi, mtd->oobblock);
 		break;
 
@@ -1105,15 +1170,15 @@ static int nand_read (struct mtd_info *mtd, loff_t from, size_t len, size_t * re
  *
  * NAND read with ECC
  */
-static int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
+extern int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
 			  size_t * retlen, u_char * buf, u_char * oob_buf, struct nand_oobinfo *oobsel)
 {
 	int i, j, col, realpage, page, end, ecc, chipnr, sndcmd = 1;
 	int read = 0, oob = 0, ecc_status = 0, ecc_failed = 0;
 	struct nand_chip *this = mtd->priv;
 	u_char *data_poi, *oob_data = oob_buf;
-	u_char ecc_calc[32];
-	u_char ecc_code[32];
+	u_char ecc_calc[MTD_NANDECC_MAX_ECCPOS];
+	u_char ecc_code[MTD_NANDECC_MAX_ECCPOS];
 	int eccmode, eccsteps;
 	unsigned *oob_config;
 	int	datidx;
@@ -1121,7 +1186,6 @@ static int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
 	int	eccbytes;
 	int	compareecc = 1;
 	int	oobreadlen;
-
 
 	DEBUG (MTD_DEBUG_LEVEL3, "nand_read_ecc: from = 0x%08x, len = %i\n", (unsigned int) from, (int) len);
 
@@ -1216,7 +1280,8 @@ static int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
 				lastwhinge = jiffies;
 			}
 #else
-			puts("Reading data from NAND FLASH without ECC is not recommended\n");
+			if (!this->is_on_die_ecc)
+				puts("Reading data from NAND FLASH without ECC is not recommended\n");
 #endif
 			this->read_buf(mtd, data_poi, end);
 			break;
@@ -1374,7 +1439,7 @@ static int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
  *
  * NAND read out-of-band data from the spare area
  */
-static int nand_read_oob (struct mtd_info *mtd, loff_t from, size_t len, size_t * retlen, u_char * buf)
+extern int nand_read_oob (struct mtd_info *mtd, loff_t from, size_t len, size_t * retlen, u_char * buf)
 {
 	int i, col, page, chipnr;
 	struct nand_chip *this = mtd->priv;
@@ -1609,7 +1674,7 @@ static int nand_write (struct mtd_info *mtd, loff_t to, size_t len, size_t * ret
  *
  * NAND write with ECC
  */
-static int nand_write_ecc (struct mtd_info *mtd, loff_t to, size_t len,
+extern int nand_write_ecc (struct mtd_info *mtd, loff_t to, size_t len,
 			   size_t * retlen, const u_char * buf, u_char * eccbuf, struct nand_oobinfo *oobsel)
 {
 	int startpage, page, ret = -EIO, oob = 0, written = 0, chipnr;
@@ -1762,12 +1827,15 @@ out:
  *
  * NAND write out-of-band
  */
-static int nand_write_oob (struct mtd_info *mtd, loff_t to, size_t len, size_t * retlen, const u_char * buf)
+extern int nand_write_oob (struct mtd_info *mtd, loff_t to, size_t len, size_t * retlen, const u_char * buf)
 {
 	int column, page, status, ret = -EIO, chipnr;
 	struct nand_chip *this = mtd->priv;
 
 	DEBUG (MTD_DEBUG_LEVEL3, "nand_write_oob: to = 0x%08x, len = %i\n", (unsigned int) to, (int) len);
+
+	/* ensure padded_buf[] will not overflow */
+	if ( (len>NAND_MAX_OOBSIZE) || (mtd->oobsize>NAND_MAX_OOBSIZE) ) BUG();
 
 	/* Shift to get page */
 	page = (int) (to >> this->page_shift);
@@ -1807,14 +1875,17 @@ static int nand_write_oob (struct mtd_info *mtd, loff_t to, size_t len, size_t *
 		this->pagebuf = -1;
 
 	if (NAND_MUST_PAD(this)) {
+		u_char padded_buf[NAND_MAX_OOBSIZE];
 		/* Write out desired data */
 		this->cmdfunc (mtd, NAND_CMD_SEQIN, mtd->oobblock, page & this->pagemask);
 		/* prepad 0xff for partial programming */
-		this->write_buf(mtd, ffchars, column);
-		/* write data */
-		this->write_buf(mtd, buf, len);
+		memcpy(padded_buf, ffchars, column);
+		/* main data */
+		memcpy(padded_buf+column, buf, len);
 		/* postpad 0xff for partial programming */
-		this->write_buf(mtd, ffchars, mtd->oobsize - (len+column));
+		memcpy(padded_buf+column+len, ffchars, mtd->oobsize - (len+column));
+		/* now write all the padded data */
+		this->write_buf(mtd, padded_buf, mtd->oobsize);
 	} else {
 		/* Write out desired data */
 		this->cmdfunc (mtd, NAND_CMD_SEQIN, mtd->oobblock + column, page & this->pagemask);
@@ -2254,6 +2325,41 @@ static int nand_block_markbad (struct mtd_info *mtd, loff_t ofs)
 }
 
 /**
+ * nand_set_features - issue a "SET FEATURES" command
+ * @mtd:	MTD device structure
+ * @feature:	the feature address (FA) to be used
+ * @parameters:	the set of 4 parameters to use (P1,P2,P3,P4)
+ *
+ * Send an entire "SET FEATURES" command to NAND device. This includes
+ * the feature address (FA), and the set of 4 parameters to use (P1,P2,P3,P4).
+ */
+static int nand_set_features (struct mtd_info *mtd, int feature, const u_char *parameters)
+{
+	register struct nand_chip *this = mtd->priv;
+
+	DEBUG (MTD_DEBUG_LEVEL0, "%s: with FA=0x%x, P1=0x%x, P2=0x%x, P3=0x%x, P4=0x%x\n",
+		__FUNCTION__, feature,
+		parameters[0], parameters[1], parameters[2], parameters[3]);
+
+	/* issue the appropriate command + address */
+	this->cmdfunc(mtd, NAND_CMD_SETFEATURES, feature, -1);
+
+	/* write the 4 parameters */
+	this->write_buf(mtd, parameters, 4);
+
+	/* short delay */
+	ndelay (100);	/* tWB = 100ns */
+
+	/* wait until "SET FEATURES" command is processed */
+	if (!this->dev_ready)
+		udelay (this->chip_delay);
+	else
+		while (!this->dev_ready(mtd));
+
+	return 0;
+}
+
+/**
  * nand_scan - [NAND Interface] Scan for the NAND device
  * @mtd:	MTD device structure
  * @maxchips:	Number of chips to scan for
@@ -2310,6 +2416,12 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 
 	/* Select the device */
 	this->select_chip(mtd, 0);
+
+	/*
+	 * Reset the chip, required by some chips (e.g. Micron MT29FxGxxxxx)
+	 * after power-up
+	 */
+	this->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
 
 	/* Send the command for reading device ID */
 	this->cmdfunc (mtd, NAND_CMD_READID, 0x00, -1);
@@ -2408,6 +2520,11 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 	}
 
 	if (!nand_flash_ids[i].name) {
+#if 1		/* QQQ - DELETE */
+		/* dump out some of the interesting data we probed */
+		printf ("Unknown NAND (Manufacturer=0x%02X, DeviceID=0x%02X)\n",
+			nand_maf_id, nand_dev_id);
+#endif		/* QQQ - DELETE */
 #ifndef CFG_NAND_QUIET_TEST
 		printk (KERN_WARNING "No NAND device found!!!\n");
 #endif
@@ -2417,6 +2534,9 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 
 	for (i=1; i < maxchips; i++) {
 		this->select_chip(mtd, i);
+
+		/* See comment in nand_get_flash_type for reset */
+		this->cmdfunc(mtd, NAND_CMD_RESET, -1, -1);
 
 		/* Send the command for reading device ID */
 		this->cmdfunc (mtd, NAND_CMD_READID, 0x00, -1);
@@ -2428,6 +2548,32 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 	}
 	if (i > 1)
 		printk(KERN_INFO "%d NAND chips detected\n", i);
+
+	/*
+	 * Enable chip-specific features (e.g. on-die ECC), or,
+	 * now that we have probed the NAND device, and we now know
+	 * the *actual* device ID, we can complete the other
+	 * structure fields properly (e.g. this->autooob).
+	 */
+#if defined(CONFIG_SH4)
+	stm_nand_chip_init(mtd, nand_maf_id, nand_dev_id);
+#endif
+	if (nand_maf_id == NAND_MFR_MICRON && nand_dev_id == 0xda) {
+		/* For Micron MT29F2G08ABAEA */
+		const u_char EnableOnDieEccParameters[4] = {0x8, 0x0, 0x0, 0x0};
+
+		/* Enable the on-die ECC feature */
+		nand_set_features(mtd, NAND_FEATURE_MICRON_ARRAY_OPERATION_MODE, EnableOnDieEccParameters);
+
+		/* update flags in structure for new ECC mode */
+		this->eccmode = NAND_ECC_NONE;
+		this->is_on_die_ecc = 1;
+
+		/* Select the appropriate default oob placement scheme for
+		 * placement agnostic filesystems */
+		this->autooob = &nand_oob_64_MT29F_on_die_ecc;
+	} else
+		this->is_on_die_ecc = 0;
 
 	/* Allocate buffers, if neccecary */
 	if (!this->oob_buf) {
@@ -2515,6 +2661,7 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 
 	case NAND_ECC_HW3_512:
 	case NAND_ECC_HW6_512:
+	case NAND_ECC_HW7_512:
 	case NAND_ECC_HW8_512:
 		if (mtd->oobblock == 256) {
 			printk (KERN_WARNING "512 byte HW ECC not possible on 256 Byte pagesize, fallback to SW ECC \n");
@@ -2528,8 +2675,13 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 	case NAND_ECC_HW3_256:
 		break;
 
+	case NAND_ECC_HW3_128:
+		this->eccsize = 128;	/* set eccsize to 128 bytes/record */
+		break;
+
 	case NAND_ECC_NONE:
-		printk (KERN_WARNING "NAND_ECC_NONE selected by board driver. This is not recommended !!\n");
+		if (!this->is_on_die_ecc)
+			printk (KERN_WARNING "NAND_ECC_NONE selected by board driver. This is not recommended !!\n");
 		this->eccmode = NAND_ECC_NONE;
 		break;
 
@@ -2550,11 +2702,14 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 	case NAND_ECC_HW12_2048:
 		this->eccbytes += 4;
 	case NAND_ECC_HW8_512:
-		this->eccbytes += 2;
+		this->eccbytes += 1;
+	case NAND_ECC_HW7_512:
+		this->eccbytes += 1;
 	case NAND_ECC_HW6_512:
 		this->eccbytes += 3;
 	case NAND_ECC_HW3_512:
 	case NAND_ECC_HW3_256:
+	case NAND_ECC_HW3_128:
 		if (this->calculate_ecc && this->correct_data && this->enable_hwecc)
 			break;
 		printk (KERN_WARNING "No ECC functions supplied, Hardware ECC not possible\n");
@@ -2570,12 +2725,17 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 		break;
 	case NAND_ECC_HW3_512:
 	case NAND_ECC_HW6_512:
+	case NAND_ECC_HW7_512:
 	case NAND_ECC_HW8_512:
 		this->eccsteps = mtd->oobblock / 512;
 		break;
 	case NAND_ECC_HW3_256:
 	case NAND_ECC_SOFT:
 		this->eccsteps = mtd->oobblock / 256;
+		break;
+
+	case NAND_ECC_HW3_128:
+		this->eccsteps = mtd->oobblock / 128;
 		break;
 
 	case NAND_ECC_NONE:
@@ -2604,12 +2764,20 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 	mtd->erase = nand_erase;
 	mtd->point = NULL;
 	mtd->unpoint = NULL;
-	mtd->read = nand_read;
-	mtd->write = nand_write;
-	mtd->read_ecc = nand_read_ecc;
-	mtd->write_ecc = nand_write_ecc;
-	mtd->read_oob = nand_read_oob;
-	mtd->write_oob = nand_write_oob;
+	/* allow board-specific init to overwrite some MTD functions */
+	if (!mtd->read)
+		mtd->read = nand_read;
+	if (!mtd->write)
+		mtd->write = nand_write;
+	if (!mtd->read_ecc)
+		mtd->read_ecc = nand_read_ecc;
+	if (!mtd->write_ecc)
+		mtd->write_ecc = nand_write_ecc;
+	if (!mtd->read_oob)
+		mtd->read_oob = nand_read_oob;
+	if (!mtd->write_oob)
+		mtd->write_oob = nand_write_oob;
+
 /* XXX U-BOOT XXX */
 #if 0
 	mtd->readv = NULL;
@@ -2633,6 +2801,7 @@ int nand_scan (struct mtd_info *mtd, int maxchips)
 #if 0
 	mtd->owner = THIS_MODULE;
 #endif
+
 	/* Build bad block table */
 	return this->scan_bbt (mtd);
 }

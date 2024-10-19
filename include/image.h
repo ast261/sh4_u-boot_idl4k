@@ -157,5 +157,9 @@ typedef struct image_header {
 	uint8_t		ih_name[IH_NMLEN];	/* Image Name		*/
 } image_header_t;
 
+typedef struct ssa_header {
+	uint8_t			ssaHdr[4];	/* Image SSA Header	*/
+	image_header_t	ih;			/* Image Header		*/
+} ssa_header_t;
 
 #endif	/* __IMAGE_H__ */

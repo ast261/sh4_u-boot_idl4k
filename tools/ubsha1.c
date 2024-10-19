@@ -29,7 +29,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include "sha1.h"
+#include "../include/sha1.h"
 
 #ifndef __ASSEMBLY__
 #define	__ASSEMBLY__		/* Dirty trick to get only #defines	*/

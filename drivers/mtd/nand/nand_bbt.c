@@ -5,6 +5,7 @@
  *   Bad block table support for the NAND driver
  *
  *  Copyright (C) 2004 Thomas Gleixner (tglx@linutronix.de)
+ *           2010-2011 STMicroelectronics. (Sean McGoogan <Sean.McGoogan@st.com>)
  *
  * $Id: nand_bbt.c,v 1.28 2004/11/13 10:19:09 gleixner Exp $
  *
@@ -63,6 +64,10 @@
 
 #include <asm/errno.h>
 
+#if defined(CONFIG_SH4)
+#include <asm-sh/ecc.h>
+#endif	/* CONFIG_SH4 */
+
 /**
  * check_pattern - [GENERIC] check if a pattern is in the buffer
  * @buf:	the buffer to search
@@ -93,7 +98,7 @@ static int check_pattern (uint8_t *buf, int len, int paglen, struct nand_bbt_des
 	/* Compare the pattern */
 	for (i = 0; i < td->len; i++) {
 		if (p[i] != td->pattern[i])
-			return -1;
+			goto check_failed;
 	}
 
 	p += td->len;
@@ -105,6 +110,45 @@ static int check_pattern (uint8_t *buf, int len, int paglen, struct nand_bbt_des
 		}
 	}
 	return 0;
+
+check_failed:
+#if defined(CONFIG_SH4)
+	if (td->options & NAND_BBT_SCANSTMBOOTECC)	/* is it "Boot-Mode+B" (3+1/128) ? */
+	{	/* Check for STM "Boot-Mode+B" ECC... */
+		int e = 0;
+		for (i = paglen+3; i < len; i += 4)
+		{	/* check: OOB[n*4+3] == 'B', for n=0,1,2,... */
+			e += ecc_bit_count_table[buf[i] ^ 'B'];
+		}
+		/* Tolerate a single bit-error across all the 'B' markers in one page */
+		if (e <= 1)
+		{
+#if 0
+			printf("info: page recognised as good \"Boot-Mode+B\" (e=%u)\n", e);
+#endif
+			return 0;	/* treat as a "good" match */
+		}
+	}
+	if (td->options & NAND_BBT_SCANSTMAFMECC)	/* is it "AFM4" (4+3/512) ? */
+	{	/* Check for STM "AFM4" ECC... */
+		int e = 0;
+		for (i = paglen+3; i < len; i += 16)
+		{	/* check: OOB[n*16+3:n*16+5] == "AFM", for n=0,1,2,... */
+			e += ecc_bit_count_table[buf[i+0] ^ 'A'];
+			e += ecc_bit_count_table[buf[i+1] ^ 'F'];
+			e += ecc_bit_count_table[buf[i+2] ^ 'M'];
+		}
+		/* Tolerate a single bit-error across all the "AFM" markers in one page */
+		if (e <= 1)
+		{
+#if 0
+			printf("info: page recognised as good \"AFM4\" (e=%u)\n", e);
+#endif
+			return 0;	/* treat as a "good" match */
+		}
+	}
+#endif	/* CONFIG_SH4 */
+	return -1;	/* patterns failed to match! */
 }
 
 /**
@@ -159,8 +203,10 @@ static int read_bbt (struct mtd_info *mtd, uint8_t *buf, int page, int num,
 				}
 				/* Leave it for now, if its matured we can move this
 				 * message to MTD_DEBUG_LEVEL0 */
+#if 0
 				printk (KERN_DEBUG "nand_read_bbt: Bad block at 0x%08x\n",
 					((offs << 2) + (act >> 1)) << this->bbt_erase_shift);
+#endif
 				/* Factory marked bad or worn out ? */
 				if (tmp == 0)
 					this->bbt[offs + (act >> 3)] |= 0x3 << (act & 0x06);
@@ -374,8 +420,10 @@ static int search_bbt (struct mtd_info *mtd, uint8_t *buf, struct nand_bbt_descr
 	for (i = 0; i < chips; i++) {
 		if (td->pages[i] == -1)
 			printk (KERN_WARNING "Bad block table not found for chip %d\n", i);
+#if 0
 		else
 			printk (KERN_DEBUG "Bad block table found at page %d, version 0x%02X\n", td->pages[i], td->version[i]);
+#endif
 	}
 	return 0;
 }
@@ -590,8 +638,13 @@ static int nand_memory_bbt (struct mtd_info *mtd, struct nand_bbt_descr *bd)
 {
 	struct nand_chip *this = mtd->priv;
 
-	/* Ensure that we only scan for the pattern and nothing else */
-	bd->options = 0;
+	/*
+	 * Ensure that we only scan for the pattern and nothing else.
+	 * Although, we also permit a block to be recognised as "good"
+	 * even if the bad block marker says otherwise, *if* it matches
+	 * one of other known "special" OOB signatures.
+	 */
+	bd->options &= NAND_BBT_SCANSTMBOOTECC|NAND_BBT_SCANSTMAFMECC;
 	create_bbt (mtd, this->data_buf, bd, -1);
 	return 0;
 }
@@ -969,6 +1022,27 @@ static struct nand_bbt_descr bbt_mirror_descr = {
 	.pattern = mirror_pattern
 };
 
+/* BBT descriptors for (Micron) on-die ECC */
+static struct nand_bbt_descr bbt_main_descr_ode = {
+	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
+		| NAND_BBT_2BIT | NAND_BBT_VERSION | NAND_BBT_PERCHIP,
+	.offs =	8 + 8,		/* need to shift by 8 due to on-die ECC */
+	.len = 4,
+	.veroffs = 12 + 8,	/* need to shift by 8 due to on-die ECC */
+	.maxblocks = 4,
+	.pattern = bbt_pattern
+};
+
+static struct nand_bbt_descr bbt_mirror_descr_ode = {
+	.options = NAND_BBT_LASTBLOCK | NAND_BBT_CREATE | NAND_BBT_WRITE
+		| NAND_BBT_2BIT | NAND_BBT_VERSION | NAND_BBT_PERCHIP,
+	.offs =	8 + 8,		/* need to shift by 8 due to on-die ECC */
+	.len = 4,
+	.veroffs = 12 + 8,	/* need to shift by 8 due to on-die ECC */
+	.maxblocks = 4,
+	.pattern = mirror_pattern
+};
+
 /**
  * nand_default_bbt - [NAND Interface] Select a default bad block table for the device
  * @mtd:	MTD device structure
@@ -991,8 +1065,16 @@ int nand_default_bbt (struct mtd_info *mtd)
 	if (this->options & NAND_IS_AND) {
 		/* Use the default pattern descriptors */
 		if (!this->bbt_td) {
-			this->bbt_td = &bbt_main_descr;
-			this->bbt_md = &bbt_mirror_descr;
+			if (this->is_on_die_ecc)
+			{
+				this->bbt_td = &bbt_main_descr_ode;
+				this->bbt_md = &bbt_mirror_descr_ode;
+			}
+			else
+			{
+				this->bbt_td = &bbt_main_descr;
+				this->bbt_md = &bbt_mirror_descr;
+			}
 		}
 		this->options |= NAND_USE_FLASH_BBT;
 		return nand_scan_bbt (mtd, &agand_flashbased);
@@ -1003,8 +1085,16 @@ int nand_default_bbt (struct mtd_info *mtd)
 	if (this->options & NAND_USE_FLASH_BBT) {
 		/* Use the default pattern descriptors */
 		if (!this->bbt_td) {
-			this->bbt_td = &bbt_main_descr;
-			this->bbt_md = &bbt_mirror_descr;
+			if (this->is_on_die_ecc)
+			{
+				this->bbt_td = &bbt_main_descr_ode;
+				this->bbt_md = &bbt_mirror_descr_ode;
+			}
+			else
+			{
+				this->bbt_td = &bbt_main_descr;
+				this->bbt_md = &bbt_mirror_descr;
+			}
 		}
 		if (!this->badblock_pattern) {
 			this->badblock_pattern = (mtd->oobblock > 512) ?

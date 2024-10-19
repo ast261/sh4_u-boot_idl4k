@@ -91,6 +91,7 @@ table_entry_t arch_name[] = {
     {	IH_CPU_PPC,		"ppc",		"PowerPC",	},
     {	IH_CPU_S390,		"s390",		"IBM S390",	},
     {	IH_CPU_SH,		"sh",		"SuperH",	},
+    {	IH_CPU_ST200,		"st200",	"STMicroelectronics ST200",	},
     {	IH_CPU_SPARC,		"sparc",	"SPARC",	},
     {	IH_CPU_SPARC64,		"sparc64",	"SPARC 64 Bit",	},
     {	IH_CPU_BLACKFIN,	"blackfin",	"Blackfin",	},
@@ -626,7 +627,7 @@ print_header (image_header_t *hdr)
 	printf ("Image Name:   %.*s\n", IH_NMLEN, hdr->ih_name);
 	printf ("Created:      %s", ctime(&timestamp));
 	printf ("Image Type:   "); print_type(hdr);
-	printf ("Data Size:    %d Bytes = %.2f kB = %.2f MB\n",
+	printf ("Data Size:    %d Bytes = %.2f KiB = %.2f MiB\n",
 		size, (double)size / 1.024e3, (double)size / 1.048576e6 );
 	printf ("Load Address: 0x%08X\n", ntohl(hdr->ih_load));
 	printf ("Entry Point:  0x%08X\n", ntohl(hdr->ih_ep));
@@ -648,7 +649,7 @@ print_header (image_header_t *hdr)
 		for (i=0; len_ptr[i]; ++i) {
 			size = ntohl(len_ptr[i]);
 
-			printf ("   Image %d: %8d Bytes = %4d kB = %d MB\n",
+			printf ("   Image %d: %8d Bytes = %4d KiB = %d MiB\n",
 				i, size, size>>10, size>>20);
 			if (hdr->ih_type == IH_TYPE_SCRIPT && i > 0) {
 				/*

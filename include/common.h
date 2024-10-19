@@ -242,6 +242,11 @@ void	forceenv     (char *, char *);
 # include <asm/setup.h>
 # include <asm/u-boot-arm.h>	/* ARM version to be fixed! */
 #endif /* CONFIG_ARM */
+
+#ifdef CONFIG_STM_ST231
+# include <asm/setup.h>
+#endif /* CONFIG_STM_ST231 */
+
 #ifdef CONFIG_I386		/* x86 version to be fixed! */
 # include <asm/u-boot-i386.h>
 #endif /* CONFIG_I386 */
@@ -578,6 +583,7 @@ void	wait_ticks    (unsigned long);
 
 /* lib_$(ARCH)/time.c */
 void	udelay	      (unsigned long);
+void	ndelay        (unsigned long nsec);
 ulong	usec2ticks    (unsigned long usec);
 ulong	ticks2usec    (unsigned long ticks);
 int	init_timebase (void);
@@ -656,5 +662,23 @@ void inline show_boot_progress (int val);
 #error CONFIG_INIT_CRITICAL is deprecated!
 #error Read section CONFIG_SKIP_LOWLEVEL_INIT in README.
 #endif
+
+/*
+ * For instrumenting read/write times (e.g. FLASH):
+ *
+ *	void PRINT_MEASURED_TRANSFER_RATE(bytes, ms);
+ *		bytes = number of bytes transfered
+ *		ms    = elapsed time in ms
+ */
+#if defined(CONFIG_MEASURE_TIME) && !defined(PRINT_MEASURED_TRANSFER_RATE)
+#define PRINT_MEASURED_TRANSFER_RATE(bytes, ms)					\
+do {										\
+    if ((ms) != 0)								\
+	printf("info: %lu bytes (%lu MiB) in %lu.%03lu sec => %lu KiB/sec\n",	\
+		(bytes), (bytes)>>20,						\
+		(ms)/1000, (ms)%1000,						\
+		(((bytes)>>10)*1000)/(ms));					\
+} while (0)
+#endif /* CONFIG_MEASURE_TIME */
 
 #endif	/* __COMMON_H_ */

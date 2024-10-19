@@ -21,6 +21,7 @@
  * MA 02111-1307 USA
  */
 
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <linux/mtd/mtd.h>
+#include <linux/mtd/mtd-user.h>
 #include "fw_env.h"
 
 typedef unsigned char uchar;
@@ -241,7 +243,7 @@ void fw_printenv (int argc, char *argv[])
 	}
 
 	for (i = 1; i < argc; ++i) {	/* print single env variables   */
-		uchar *name = argv[i];
+		uchar *name = (uchar*)argv[i];
 		uchar *val = NULL;
 
 		for (env = environment.data; *env; env = nxt + 1) {
@@ -256,10 +258,10 @@ void fw_printenv (int argc, char *argv[])
 			val = envmatch (name, env);
 			if (val) {
 				if (!n_flag) {
-					fputs (name, stdout);
+					fputs ((char*)name, stdout);
 					putc ('=', stdout);
 				}
-				puts (val);
+				puts ((char*)val);
 				break;
 			}
 		}
@@ -290,7 +292,7 @@ int fw_setenv (int argc, char *argv[])
 	if (env_init ())
 		return (errno);
 
-	name = argv[1];
+	name = (uchar*)argv[1];
 
 	/*
 	 * search if variable with this name already exists
@@ -314,8 +316,8 @@ int fw_setenv (int argc, char *argv[])
 		/*
 		 * Ethernet Address and serial# can be set only once
 		 */
-		if ((strcmp (name, "ethaddr") == 0) ||
-			(strcmp (name, "serial#") == 0)) {
+		if ((strcmp ((char*)name, "ethaddr") == 0) ||
+			(strcmp ((char*)name, "serial#") == 0)) {
 			fprintf (stderr, "Can't overwrite \"%s\"\n", name);
 			return (EROFS);
 		}
@@ -347,7 +349,7 @@ int fw_setenv (int argc, char *argv[])
 	 * Overflow when:
 	 * "name" + "=" + "val" +"\0\0"  > CFG_ENV_SIZE - (env-environment)
 	 */
-	len = strlen (name) + 2;
+	len = strlen ((char*)name) + 2;
 	/* add '=' for first arg, ' ' for all others */
 	for (i = 2; i < argc; ++i) {
 		len += strlen (argv[i]) + 1;
@@ -361,7 +363,7 @@ int fw_setenv (int argc, char *argv[])
 	while ((*env = *name++) != '\0')
 		env++;
 	for (i = 2; i < argc; ++i) {
-		uchar *val = argv[i];
+		uchar *val = (uchar*)argv[i];
 
 		*env = (i == 2) ? '=' : ' ';
 		while ((*++env = *val++) != '\0');
@@ -390,7 +392,7 @@ static int flash_io (int mode)
 	erase_info_t erase;
 	char *data = NULL;
 
-	if ((fd = open (DEVNAME (curdev), mode)) < 0) {
+	if ((fd = open ((char*)DEVNAME (curdev), mode)) < 0) {
 		fprintf (stderr,
 			"Can't open %s: %s\n",
 			DEVNAME (curdev), strerror (errno));
@@ -406,7 +408,7 @@ static int flash_io (int mode)
 		if (HaveRedundEnv) {
 			/* switch to next partition for writing */
 			otherdev = !curdev;
-			if ((fdr = open (DEVNAME (otherdev), mode)) < 0) {
+			if ((fdr = open ((char*)DEVNAME (otherdev), mode)) < 0) {
 				fprintf (stderr,
 					"Can't open %s: %s\n",
 					DEVNAME (otherdev),
@@ -714,14 +716,14 @@ static int parse_config ()
 	HaveRedundEnv = 1;
 #endif
 #endif
-	if (stat (DEVNAME (0), &st)) {
+	if (stat ((char*)DEVNAME (0), &st)) {
 		fprintf (stderr,
 			"Cannot access MTD device %s: %s\n",
 			DEVNAME (0), strerror (errno));
 		return 1;
 	}
 
-	if (HaveRedundEnv && stat (DEVNAME (1), &st)) {
+	if (HaveRedundEnv && stat ((char*)DEVNAME (1), &st)) {
 		fprintf (stderr,
 			"Cannot access MTD device %s: %s\n",
 			DEVNAME (1), strerror (errno));

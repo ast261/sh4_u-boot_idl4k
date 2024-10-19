@@ -4,6 +4,7 @@
  *  Copyright (c) 2000 David Woodhouse <dwmw2@mvhi.com>
  *		       Steven J. Hill <sjhill@realitydiluted.com>
  *		       Thomas Gleixner <tglx@linutronix.de>
+ *           2009-2011 STMicroelectronics. (Sean McGoogan <Sean.McGoogan@st.com>)
  *
  * $Id: nand.h,v 1.68 2004/11/12 10:40:37 gleixner Exp $
  *
@@ -64,12 +65,20 @@ extern void nand_release (struct mtd_info *mtd);
 /* Read raw data from the device without ECC */
 extern int nand_read_raw (struct mtd_info *mtd, uint8_t *buf, loff_t from, size_t len, size_t ooblen);
 
+/* read/write with ECC functions */
+extern int nand_read_ecc (struct mtd_info *mtd, loff_t from, size_t len,
+			  size_t * retlen, u_char * buf, u_char * eccbuf, struct nand_oobinfo *oobsel);
+extern int nand_read_oob (struct mtd_info *mtd, loff_t from, size_t len, size_t * retlen, u_char * buf);
+extern int nand_write_ecc (struct mtd_info *mtd, loff_t to, size_t len,
+			   size_t * retlen, const u_char * buf, u_char * eccbuf, struct nand_oobinfo *oobsel);
+extern int nand_write_oob (struct mtd_info *mtd, loff_t to, size_t len, size_t * retlen, const u_char *buf);
 
 /* This constant declares the max. oobsize / page, which
  * is supported now. If you add a chip with bigger oobsize/page
  * adjust this accordingly.
  */
 #define NAND_MAX_OOBSIZE	64
+#define NAND_MAX_PAGESIZE	2048
 
 /*
  * Constants for hardware specific CLE/ALE/NCE function
@@ -104,6 +113,7 @@ extern int nand_read_raw (struct mtd_info *mtd, uint8_t *buf, loff_t from, size_
 #define NAND_CMD_SEQIN		0x80
 #define NAND_CMD_READID		0x90
 #define NAND_CMD_ERASE2		0xd0
+#define NAND_CMD_SETFEATURES	0xef
 #define NAND_CMD_RESET		0xff
 
 /* Extended commands for large page devices */
@@ -116,6 +126,9 @@ extern int nand_read_raw (struct mtd_info *mtd, uint8_t *buf, loff_t from, size_
 #define NAND_STATUS_TRUE_READY	0x20
 #define NAND_STATUS_READY	0x40
 #define NAND_STATUS_WP		0x80
+
+/* Feature Addresses (for the "SET FEATURES" command) */
+#define NAND_FEATURE_MICRON_ARRAY_OPERATION_MODE	0x90
 
 /*
  * Constants for ECC_MODES
@@ -135,6 +148,10 @@ extern int nand_read_raw (struct mtd_info *mtd, uint8_t *buf, loff_t from, size_
 #define NAND_ECC_HW8_512	6
 /* Hardware ECC 12 byte ECC per 2048 Byte data */
 #define NAND_ECC_HW12_2048	7
+/* Hardware ECC 3 byte ECC per 128 Byte data */
+#define NAND_ECC_HW3_128	8
+/* Hardware ECC 7 byte ECC per 512 Byte data */
+#define NAND_ECC_HW7_512	9
 
 /*
  * Constants for Hardware ECC
@@ -337,6 +354,7 @@ struct nand_chip {
 	struct nand_bbt_descr	*badblock_pattern;
 	struct nand_hw_control	*controller;
 	void		*priv;
+	int		is_on_die_ecc;		/* boolean flag */
 };
 
 /*
@@ -450,6 +468,9 @@ struct nand_bbt_descr {
 #define NAND_BBT_SAVECONTENT	0x00002000
 /* Search good / bad pattern on the first and the second page */
 #define NAND_BBT_SCAN2NDPAGE	0x00004000
+/* Handle STMicroelectronics H/W ECC schemes (boot-mode, AFM4) */
+#define NAND_BBT_SCANSTMBOOTECC	0x00010000
+#define NAND_BBT_SCANSTMAFMECC	0x00020000
 
 /* The maximum number of blocks to scan for a bbt */
 #define NAND_BBT_SCAN_MAXBLOCKS 4

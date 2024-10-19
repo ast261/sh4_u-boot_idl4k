@@ -6,6 +6,8 @@
  *
  * Added 16-bit nand support
  * (C) 2004 Texas Instruments
+ *
+ * Copyright (C) 2010-2011 STMicroelectronics. (Sean McGoogan <Sean.McGoogan@st.com>)
  */
 
 #include <common.h>
@@ -44,6 +46,7 @@ static int nand_dump_oob(nand_info_t *nand, ulong off)
 	return 0;
 }
 
+#define pp(x)	((x>0x1F)&&(x<0x7F))?x:'.'
 static int nand_dump(nand_info_t *nand, ulong off)
 {
 	int i;
@@ -64,17 +67,22 @@ static int nand_dump(nand_info_t *nand, ulong off)
 	printf("Page %08x dump:\n", off);
 	i = nand->oobblock >> 4; p = buf;
 	while (i--) {
-		printf( "\t%02x %02x %02x %02x %02x %02x %02x %02x"
-			"  %02x %02x %02x %02x %02x %02x %02x %02x\n",
+		printf( "%08x: %02x%02x%02x%02x %02x%02x%02x%02x"
+			" %02x%02x%02x%02x %02x%02x%02x%02x", off+(p-buf),
 			p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
 			p[8], p[9], p[10], p[11], p[12], p[13], p[14], p[15]);
+		printf( "    %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n",
+			pp(p[0]), pp(p[1]), pp(p[2]), pp(p[3]), pp(p[4]), pp(p[5]), pp(p[6]), pp(p[7]),
+			pp(p[8]), pp(p[9]), pp(p[10]), pp(p[11]), pp(p[12]), pp(p[13]), pp(p[14]), pp(p[15]));
 		p += 16;
 	}
-	puts("OOB:\n");
+	puts("\nOOB:\n");
 	i = nand->oobsize >> 3;
 	while (i--) {
-		printf( "\t%02x %02x %02x %02x %02x %02x %02x %02x\n",
+		printf( "          %02x%02x%02x%02x %02x%02x%02x%02x",
 			p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+		printf( "    %c%c%c%c%c%c%c%c\n",
+				pp(p[0]), pp(p[1]), pp(p[2]), pp(p[3]), pp(p[4]), pp(p[5]), pp(p[6]), pp(p[7]));
 		p += 8;
 	}
 	free(buf);
@@ -267,24 +275,7 @@ int do_nand(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 		opts.quiet  = quiet;
 
 		if (scrub) {
-			puts("Warning: "
-			     "scrub option will erase all factory set "
-			     "bad blocks!\n"
-			     "         "
-			     "There is no reliable way to recover them.\n"
-			     "         "
-			     "Use this command only for testing purposes "
-			     "if you\n"
-			     "         "
-			     "are sure of what you are doing!\n"
-			     "\nReally scrub this NAND flash? <y/N>\n");
-
-			if (getc() == 'y' && getc() == '\r') {
 				opts.scrub = 1;
-			} else {
-				puts("scrub aborted\n");
-				return -1;
-			}
 		}
 		ret = nand_erase_opts(nand, &opts);
 		printf("%s\n", ret ? "ERROR" : "OK");
@@ -311,6 +302,9 @@ int do_nand(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 	/* read write */
 	if (strncmp(cmd, "read", 4) == 0 || strncmp(cmd, "write", 5) == 0) {
 		int read;
+#if defined(CONFIG_MEASURE_TIME)
+		ulong duration;			/* measured time in ms */
+#endif	/* CONFIG_MEASURE_TIME */
 
 		if (argc < 4)
 			goto usage;
@@ -333,7 +327,13 @@ int do_nand(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 				opts.length	= size;
 				opts.offset	= off;
 				opts.quiet      = quiet;
+#if defined(CONFIG_MEASURE_TIME)
+				set_timer(0);			/* start measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 				ret = nand_read_opts(nand, &opts);
+#if defined(CONFIG_MEASURE_TIME)
+				duration = get_timer(0);	/* stop measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 			} else {
 				/* write */
 				nand_write_options_t opts;
@@ -345,18 +345,49 @@ int do_nand(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 				opts.pad	= 1;
 				opts.blockalign = 1;
 				opts.quiet      = quiet;
+#if defined(CONFIG_MEASURE_TIME)
+				set_timer(0);			/* start measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 				ret = nand_write_opts(nand, &opts);
+#if defined(CONFIG_MEASURE_TIME)
+				duration = get_timer(0);	/* stop measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 			}
+		} else if (s != NULL && !strcmp(s, ".oob")) {
+			if (size > nand->oobsize) {
+				printf("Error: Too big! OOB size is only %u (0x%x) bytes.\n",
+					nand->oobsize, nand->oobsize);
+				return 1;
+			}
+#if defined(CONFIG_MEASURE_TIME)
+			set_timer(0);				/* start measuring */
+#endif	/* CONFIG_MEASURE_TIME */
+			if (read)
+				ret = nand_read_oob_wrapper(nand, off, &size, (u_char *)addr);
+			else
+				ret = nand_write_oob_wrapper(nand, off, &size, (u_char *)addr);
+#if defined(CONFIG_MEASURE_TIME)
+			duration = get_timer(0);		/* stop measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 		} else {
+#if defined(CONFIG_MEASURE_TIME)
+			set_timer(0);				/* start measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 			if (read)
 				ret = nand_read(nand, off, &size, (u_char *)addr);
 			else
 				ret = nand_write(nand, off, &size, (u_char *)addr);
+#if defined(CONFIG_MEASURE_TIME)
+			duration = get_timer(0);		/* stop measuring */
+#endif	/* CONFIG_MEASURE_TIME */
 		}
 
 		printf(" %d bytes %s: %s\n", size,
 		       read ? "read" : "written", ret ? "ERROR" : "OK");
 
+#if defined(CONFIG_MEASURE_TIME)
+		PRINT_MEASURED_TRANSFER_RATE(size, duration);
+#endif	/* CONFIG_MEASURE_TIME */
 		return ret == 0 ? 0 : 1;
 	}
 
@@ -458,6 +489,8 @@ U_BOOT_CMD(nand, 5, 1, do_nand,
 	"nand read[.jffs2]     - addr off|partition size\n"
 	"nand write[.jffs2]    - addr off|partition size - read/write `size' bytes starting\n"
 	"    at offset `off' to/from memory address `addr'\n"
+	"nand read.oob addr off size   - read out-of-band data\n"
+	"nand write.oob addr off size  - write out-of-band data\n"
 	"nand erase [clean] [off size] - erase `size' bytes from\n"
 	"    offset `off' (entire device if not specified)\n"
 	"nand bad - show bad blocks\n"
@@ -555,6 +588,7 @@ static int nand_load_image(cmd_tbl_t *cmdtp, nand_info_t *nand,
 	return 0;
 }
 
+#ifndef CONFIG_USE_FTA_SSA
 int do_nandboot(cmd_tbl_t * cmdtp, int flag, int argc, char *argv[])
 {
 	char *boot_device = NULL;
@@ -636,6 +670,7 @@ usage:
 U_BOOT_CMD(nboot, 4, 1, do_nandboot,
 	"nboot   - boot from NAND device\n",
 	"[.jffs2] [partition] | [[[loadAddr] dev] offset]\n");
+#endif /* CONFIG_USE_FTA_SSA */
 
 #endif
 

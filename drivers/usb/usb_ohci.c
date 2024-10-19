@@ -68,9 +68,47 @@
     defined(CONFIG_S3C2410) || \
     defined(CONFIG_440EP) || \
     defined(CONFIG_PCI_OHCI) || \
-    defined(CONFIG_MPC5200)
+    defined(CONFIG_MPC5200) || \
+    defined(CONFIG_SH_FLI7510)
 # define OHCI_USE_NPS		/* force NoPowerSwitching mode */
 #endif
+
+/*
+ * On the SuperH architecture, we need to pass 'physical' addresses
+ * to the on-chip USB hardware, and not use 'virtual' CPU addresses.
+ *
+ * In 29-bit mode, we just zero the top 3 bits of the virtual address.
+ *
+ * In 32-bit mode, we need to honour the PMB mappings.
+ * 	i.e. VA 0x80000000 == PA 0x40000000
+ *
+ * Note: We must not modify at all if the address is 0x00000000.
+ */
+#ifdef __SH4__
+#if defined(CONFIG_SH_SE_MODE)
+#	define PHYSICAL_ADDR(addr)	\
+	((__u32)(addr) ? ((0x1ffffffful&(__u32)(addr))|(CFG_SE_PHYSICAL_BASE)) : 0ul)
+#else
+#	define PHYSICAL_ADDR(addr)	( 0x1ffffffful & (__u32)(addr) )
+#endif	/* CONFIG_SH_SE_MODE */
+#else	/* __SH4__ */
+#	define PHYSICAL_ADDR(addr)	(addr)
+#endif	/* __SH4__ */
+
+/* WARNING! WARNING! WARNING! WARNING!
+ * Uncommenting the following line will remove some delays in the USB
+ * sub-system. However, it is possible that some of these removed delays
+ * may be actually necessary on some hardware devices.
+ * So, although this gives a useful performance improvement, it does
+ * so at the potential risk of reliability and stability.  This should be
+ * considered as an experiential configuration, and not at all recommended
+ * for production or deployment code, unless it has been thoroughly
+ * tested for your specific hardware.
+ * Enabling this optimisation makes some assumptions, that may be totally
+ * without any foundation.  If reliability or stability becomes an issue,
+ * then please disable this configuration option, as a first step.
+ * Use it at your own peril - caveat emptor! */
+//#define CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
 
 #undef OHCI_VERBOSE_DEBUG	/* not always helpful */
 #undef DEBUG
@@ -85,11 +123,11 @@
  * e.g. PCI controllers need this
  */
 #ifdef CFG_OHCI_SWAP_REG_ACCESS
-# define readl(a) __swap_32(*((vu_long *)(a)))
-# define writel(a, b) (*((vu_long *)(b)) = __swap_32((vu_long)a))
+# define readl(a) __swap_32(*((volatile u32 *)(a)))
+# define writel(a, b) (*((volatile u32 *)(b)) = __swap_32((volatile u32)a))
 #else
-# define readl(a) (*((vu_long *)(a)))
-# define writel(a, b) (*((vu_long *)(b)) = ((vu_long)a))
+# define readl(a) (*((volatile u32 *)(a)))
+# define writel(a, b) (*((volatile u32 *)(b)) = ((volatile u32)a))
 #endif /* CFG_OHCI_SWAP_REG_ACCESS */
 
 #define min_t(type,x,y) ({ type __x = (x); type __y = (y); __x < __y ? __x: __y; })
@@ -414,7 +452,7 @@ static void ohci_dump (ohci_t *controller, int verbose)
 		ep_print_int_eds (controller, "hcca");
 	dbg ("hcca frame #%04x", controller->hcca->frame_no);
 	ohci_dump_roothub (controller, 1);
-
+}
 #endif /* DEBUG */
 
 /*-------------------------------------------------------------------------*
@@ -631,9 +669,9 @@ static int ep_link (ohci_t *ohci, ed_t *edi)
 	case PIPE_CONTROL:
 		ed->hwNextED = 0;
 		if (ohci->ed_controltail == NULL) {
-			writel (ed, &ohci->regs->ed_controlhead);
+			writel (PHYSICAL_ADDR(ed), &ohci->regs->ed_controlhead);
 		} else {
-			ohci->ed_controltail->hwNextED = m32_swap ((unsigned long)ed);
+			ohci->ed_controltail->hwNextED = PHYSICAL_ADDR(m32_swap ((unsigned long)ed));
 		}
 		ed->ed_prev = ohci->ed_controltail;
 		if (!ohci->ed_controltail && !ohci->ed_rm_list[0] &&
@@ -647,9 +685,9 @@ static int ep_link (ohci_t *ohci, ed_t *edi)
 	case PIPE_BULK:
 		ed->hwNextED = 0;
 		if (ohci->ed_bulktail == NULL) {
-			writel (ed, &ohci->regs->ed_bulkhead);
+			writel (PHYSICAL_ADDR(ed), &ohci->regs->ed_bulkhead);
 		} else {
-			ohci->ed_bulktail->hwNextED = m32_swap ((unsigned long)ed);
+			ohci->ed_bulktail->hwNextED = PHYSICAL_ADDR(m32_swap ((unsigned long)ed));
 		}
 		ed->ed_prev = ohci->ed_bulktail;
 		if (!ohci->ed_bulktail && !ohci->ed_rm_list[0] &&
@@ -788,7 +826,7 @@ static ed_t * ep_add_ed (struct usb_device *usb_dev, unsigned long pipe,
 		ed->hwINFO = m32_swap (OHCI_ED_SKIP); /* skip ed */
 		/* dummy td; end of td list for ed */
 		td = td_alloc (usb_dev);
-		ed->hwTailP = m32_swap ((unsigned long)td);
+		ed->hwTailP = PHYSICAL_ADDR(m32_swap ((unsigned long)td));
 		ed->hwHeadP = ed->hwTailP;
 		ed->state = ED_UNLINK;
 		ed->type = usb_pipetype (pipe);
@@ -851,12 +889,12 @@ static void td_fill (ohci_t *ohci, unsigned int info,
 		data = 0;
 
 	td->hwINFO = m32_swap (info);
-	td->hwCBP = m32_swap ((unsigned long)data);
+	td->hwCBP = PHYSICAL_ADDR(m32_swap ((unsigned long)data));
 	if (data)
-		td->hwBE = m32_swap ((unsigned long)(data + len - 1));
+		td->hwBE = PHYSICAL_ADDR(m32_swap ((unsigned long)(data + len - 1)));
 	else
 		td->hwBE = 0;
-	td->hwNextTD = m32_swap ((unsigned long)td_pt);
+	td->hwNextTD = PHYSICAL_ADDR(m32_swap ((unsigned long)td_pt));
 
 	/* append to queue */
 	td->ed->hwTailP = td->hwNextTD;
@@ -875,6 +913,7 @@ static void td_submit_job (struct usb_device *dev, unsigned long pipe, void *buf
 	int cnt = 0;
 	__u32 info = 0;
 	unsigned int toggle = 0;
+	volatile struct ed * ed;
 
 	/* OHCI handles the DATA-toggles itself, we just use the USB-toggle bits for reseting */
 	if(usb_gettoggle(dev, usb_pipeendpoint(pipe), usb_pipeout(pipe))) {
@@ -902,6 +941,27 @@ static void td_submit_job (struct usb_device *dev, unsigned long pipe, void *buf
 		td_fill (ohci, info | (cnt? TD_T_TOGGLE:toggle), data, data_len, dev, cnt, urb);
 		cnt++;
 
+		/* check for possible DataToggle errors */
+		ed = urb->td[0]->ed;
+		if ( ((ed->hwHeadP>>1)&0x1) != (toggle ? 0 : 1) )
+		{
+			/*
+			 * If we were now to instruct the HC to process
+			 * the TDs, we would yield a DataToggle error.
+			 * We correct this here, by ensuring the HC
+			 * is back in sync with the device.
+			 */
+#if 0
+			printf ("\n************************************************************\n"
+				"OHCI: Correcting putative DataToggle Error for dev=%u, en=%u-%s\n"
+				"************************************************************\n",
+				usb_pipedevice(pipe),
+				usb_pipeendpoint(pipe),
+				usb_pipeout(pipe) ? "O" : "I");
+#endif
+				/* invert the "toggleCarry" bit in the ED */
+			ed->hwHeadP ^= 0x2;
+		}
 		if (!ohci->sleeping)
 			writel (OHCI_BLF, &ohci->regs->cmdstatus); /* start bulk list */
 		break;
@@ -1031,6 +1091,12 @@ static int dl_done_list (ohci_t *ohci, td_t *td_list)
 			dbg("ConditionCode %#x", cc);
 			stat = cc_to_error[cc];
 		}
+
+		/* save the toggleCarry bit, for later use */
+		usb_settoggle (lurb_priv->dev,
+			usb_pipeendpoint(lurb_priv->pipe),
+			usb_pipeout(lurb_priv->pipe),
+			(ed->hwHeadP>>1)&0x1);
 
 		/* see if this done list makes for all TD's of current URB,
 		 * and mark the URB finished if so */
@@ -1220,6 +1286,9 @@ static int ohci_submit_rh_msg(struct usb_device *dev, unsigned long pipe,
 	__u16 wIndex;
 	__u16 wLength;
 
+		/* to workaround strict aliasing issues */
+	typedef __u16 __attribute__((__may_alias__)) __u16_any;
+
 #ifdef DEBUG
 pkt_print(NULL, dev, pipe, buffer, transfer_len, cmd, "SUB(rh)", usb_pipein(pipe));
 #else
@@ -1248,11 +1317,11 @@ pkt_print(NULL, dev, pipe, buffer, transfer_len, cmd, "SUB(rh)", usb_pipein(pipe
 	*/
 
 	case RH_GET_STATUS:
-			*(__u16 *) data_buf = cpu_to_le16 (1); OK (2);
+			*(__u16_any *) data_buf = cpu_to_le16 (1); OK (2);
 	case RH_GET_STATUS | RH_INTERFACE:
-			*(__u16 *) data_buf = cpu_to_le16 (0); OK (2);
+			*(__u16_any *) data_buf = cpu_to_le16 (0); OK (2);
 	case RH_GET_STATUS | RH_ENDPOINT:
-			*(__u16 *) data_buf = cpu_to_le16 (0); OK (2);
+			*(__u16_any *) data_buf = cpu_to_le16 (0); OK (2);
 	case RH_GET_STATUS | RH_CLASS:
 			*(__u32 *) data_buf = cpu_to_le32 (
 				RD_RH_STAT & ~(RH_HS_CRWE | RH_HS_DRWE));
@@ -1454,7 +1523,9 @@ int submit_common_msg(struct usb_device *dev, unsigned long pipe, void *buffer,
 	urb->actual_length = 0;
 	pkt_print(urb, dev, pipe, buffer, transfer_len, setup, "SUB", usb_pipein(pipe));
 #else
+#ifndef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
 	wait_ms(1);
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 #endif
 	if (!maxsize) {
 		err("submit_common_message: pipesize for pipe %lx is zero",
@@ -1478,6 +1549,10 @@ int submit_common_msg(struct usb_device *dev, unsigned long pipe, void *buffer,
 		timeout = BULK_TO;
 	else
 		timeout = 100;
+#ifdef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
+	/* use units of 100us, instead of 1ms */
+	timeout *= 10;
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 
 	/* wait for it to complete */
 	for (;;) {
@@ -1503,7 +1578,12 @@ int submit_common_msg(struct usb_device *dev, unsigned long pipe, void *buffer,
 		}
 
 		if (--timeout) {
+#ifdef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
+			/* use units of 100us, instead of 1ms */
+			udelay(100);
+#else
 			wait_ms(1);
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 			if (!urb->finished)
 				dbg("\%");
 
@@ -1522,7 +1602,9 @@ int submit_common_msg(struct usb_device *dev, unsigned long pipe, void *buffer,
 #ifdef DEBUG
 	pkt_print(urb, dev, pipe, buffer, transfer_len, setup, "RET(ctlr)", usb_pipein(pipe));
 #else
+#ifndef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
 	wait_ms(1);
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 #endif
 
 	/* free TDs in urb_priv */
@@ -1548,7 +1630,9 @@ int submit_control_msg(struct usb_device *dev, unsigned long pipe, void *buffer,
 #ifdef DEBUG
 	pkt_print(NULL, dev, pipe, buffer, transfer_len, setup, "SUB", usb_pipein(pipe));
 #else
+#ifndef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
 	wait_ms(1);
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 #endif
 	if (!maxsize) {
 		err("submit_control_message: pipesize for pipe %lx is zero",
@@ -1640,7 +1724,7 @@ static int hc_start (ohci_t * ohci)
 	writel (0, &ohci->regs->ed_controlhead);
 	writel (0, &ohci->regs->ed_bulkhead);
 
-	writel ((__u32)ohci->hcca, &ohci->regs->hcca); /* a reset clears this */
+	writel (PHYSICAL_ADDR((__u32)ohci->hcca), &ohci->regs->hcca); /* a reset clears this */
 
 	fminterval = 0x2edf;
 	writel ((fminterval * 9) / 10, &ohci->regs->periodicstart);
@@ -1738,7 +1822,9 @@ static int hc_interrupt (void)
 	}
 
 	if (ints & OHCI_INTR_WDH) {
+#ifndef CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS
 		wait_ms(1);
+#endif	/* CONFIG_USB_AGGRESSIVE_MINIMAL_DELAYS */
 		writel (OHCI_INTR_WDH, &regs->intrdisable);
 		(void)readl (&regs->intrdisable); /* flush */
 		stat = dl_done_list (&gohci, dl_reverse_done_list (&gohci));
