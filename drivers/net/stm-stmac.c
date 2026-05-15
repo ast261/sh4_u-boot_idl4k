@@ -205,12 +205,8 @@ static void *rx_packets[CONFIG_DMA_RX_SIZE];
 #elif defined(CONFIG_STMAC_RTL8201E)	/* REALTEK RTL8201E(L) */
 
 /* REALTEK RTL8201E(L) phy identifier values */
-#define RTL8201E_PHY_ID		0x001cc815u
-#define RTL8201E_PHY_ID_MASK	0xffffffffu
-
-#define PHY_TEST_REG		0x19	/* PHY Support Register */
-#define PHY_ADDR_MSK		0x180	/* PHY Address Mask */
-#define PHY_ADDR_SHIFT		7	/* PHY Address Mask */
+#define RTL8201E_PHY_ID		0x001cc800u
+#define RTL8201E_PHY_ID_MASK	0xfffff800u	/* covers RTL8201E (0x001cc815) and RTL8201F (0x001cc915) */
 
 #else
 #error Need to define which PHY to use
@@ -357,7 +353,7 @@ static unsigned int stmac_phy_get_addr (void)
 		}
 #elif defined(CONFIG_STMAC_RTL8201E)
 		if ((id & RTL8201E_PHY_ID_MASK) == RTL8201E_PHY_ID) {
-			printf (STMAC "REALTEK RTL8201E(L) found\n");
+			printf (STMAC "REALTEK RTL8211E found\n");
 			return phyaddr;
 		}
 #else
@@ -404,7 +400,8 @@ static int stmac_phy_init (void)
 #elif defined(CONFIG_STMAC_DP83865)
 	value = stmac_mii_read (eth_phy_addr, PHY_SUP_REG);
 #elif defined(CONFIG_STMAC_RTL8201E)
-	value = stmac_mii_read (eth_phy_addr, PHY_TEST_REG);
+	/* RTL8201E/F do not expose PHY address in a readable register */
+#	define CONFIG_STMAC_BYPASS_ADDR_MISMATCH
 #elif defined(CONFIG_STMAC_KSZ8041)
 	/* The Micrel KSZ8041 does not appear to support
 	 * reading the H/W PHY address from any register.  */

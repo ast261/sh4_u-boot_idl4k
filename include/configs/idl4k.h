@@ -206,10 +206,10 @@
  */
 #ifdef CONFIG_DRIVER_NET_STM_GMAC
 #define CFG_STM_STMAC0_BASE	0xfda88000ul	/* MII #0 (off-board, JP2) */
-#define CFG_STM_STMAC1_BASE	0xfe730000ul	/* MII #1 (on-board, IC+ IP1001) */
+#define CFG_STM_STMAC1_BASE	0xfe730000ul	/* MII #1 (on-board, Realtek RTL8201F) */
 #if 1
 #define CFG_STM_STMAC_BASE	CFG_STM_STMAC1_BASE
-#define CONFIG_STMAC_IP1001	/* IC+ IP1001 (UP1) */
+#define CONFIG_STMAC_RTL8201E	/* Realtek RTL8201F (compatible) */
 #else
 #define CFG_STM_STMAC_BASE	CFG_STM_STMAC0_BASE
 #define CONFIG_STMAC_xxx		/* NOTE: users need to specify this! */
