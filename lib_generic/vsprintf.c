@@ -383,3 +383,8 @@ void panic(const char *fmt, ...)
 	do_reset (NULL, 0, 0, NULL);
 #endif
 }
+
+void abort(void)
+{
+	hang();
+}
