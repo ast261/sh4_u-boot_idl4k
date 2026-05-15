@@ -71,6 +71,12 @@ On every boot, U-Boot checks for `idl4k.scr` on the USB stick and executes it if
 | fw2-nand0 | 32 MiB | 0x2420000 | Secondary firmware |
 | data-nand0 | ~62 MiB | 0x4420000 | User data |
 
+## Networking
+
+**DHCP / Ethernet does not work on this board.** The on-board PHY is an RTL8211EG (gigabit, RGMII-strapped), but the STx7108 GMAC in this U-Boot port has no RGMII support — only MII/RMII/GMII/GMII-GTX/reverse-MII. The MAC↔PHY interface mode mismatch means the PHY shows link and activity but emits no valid Ethernet frames. There is no software-only fix in this U-Boot tree.
+
+Do not attempt to "fix" `dhcp` / `ping` / `tftpboot`. The `CONFIG_STMAC_IP1001` declaration in `include/configs/idl4k.h` is the historical config; treat it as inert. Use the USB-stick `updatefw` path described above for all field updates.
+
 ## Architecture
 
 ### Directory Layout
