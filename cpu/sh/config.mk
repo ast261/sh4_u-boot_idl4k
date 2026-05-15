@@ -26,7 +26,7 @@
 
 ### old:  PLATFORM_CPPFLAGS += -m4 -m4-nofpu -U__sh3__
 ### want: PLATFORM_CPPFLAGS += -m4 -mno-implicit-fp
-PLATFORM_CPPFLAGS += -m4 -U__sh3__ -D__SH4__=1
+PLATFORM_CPPFLAGS += -m4 -U__sh3__ -D__SH4__=1 -fno-stack-protector
 
 ifeq ($(UBOOT_DEBUG), 1)
 PLATFORM_CPPFLAGS += -O0

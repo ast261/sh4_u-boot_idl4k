@@ -69,3 +69,5 @@ ENTRY(strlen)
 8:
 	rts
 	 mov	r2,r0
+
+	.section .note.GNU-stack,"",@progbits

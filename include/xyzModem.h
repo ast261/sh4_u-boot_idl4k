@@ -97,6 +97,7 @@ typedef struct {
 #endif
 } connection_info_t;
 
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
 #ifndef	BOOL_WAS_DEFINED
 #define BOOL_WAS_DEFINED
 typedef unsigned int bool;
@@ -104,6 +105,7 @@ typedef unsigned int bool;
 
 #define false 0
 #define true 1
+#endif
 
 #endif
 

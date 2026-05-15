@@ -56,3 +56,5 @@ ENTRY(memset)
 5:
 	rts
 	 mov	r4,r0
+
+	.section .note.GNU-stack,"",@progbits

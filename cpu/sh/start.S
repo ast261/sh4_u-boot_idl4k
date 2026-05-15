@@ -889,3 +889,5 @@ sh_toggle_pmb_cacheability_offset:
 	.long env_init	/* any reference to anything in "env_eeprom.o" */
 #endif /* CFG_ENV_IS_IN_EEPROM */
 
+
+	.section .note.GNU-stack,"",@progbits

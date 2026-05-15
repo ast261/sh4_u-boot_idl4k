@@ -253,3 +253,5 @@ case1:
 	add	#-3,r0
 	bra	8b
 	 add	#-1,r4
+
+	.section .note.GNU-stack,"",@progbits

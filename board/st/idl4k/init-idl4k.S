@@ -82,3 +82,5 @@ __memory_setup_table:
 __memory_setup_table_end:
 
 	.end
+
+	.section .note.GNU-stack,"",@progbits

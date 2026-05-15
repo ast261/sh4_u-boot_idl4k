@@ -114,7 +114,7 @@ void usb_hub_reset(void);
  * wait_ms
  */
 
-void __inline__ wait_ms(unsigned long ms)
+void wait_ms(unsigned long ms)
 {
 	while(ms-->0)
 		udelay(1000);

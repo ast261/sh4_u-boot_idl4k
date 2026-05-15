@@ -124,3 +124,5 @@ p2_to_p1_mask:		.long ~0x20000000
 #endif	/* CONFIG_SH_OLD_POKE_LOOP_PARADIGM */
 
 
+
+	.section .note.GNU-stack,"",@progbits

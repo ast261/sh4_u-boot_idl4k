@@ -207,3 +207,5 @@ ENTRY(sh_toggle_pmb_cacheability)
 	  nop
 #endif	/* CONFIG_SH_SE_MODE */
 
+
+	.section .note.GNU-stack,"",@progbits

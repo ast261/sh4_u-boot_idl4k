@@ -36,8 +36,16 @@
 #define CONFIG_SILENT_CONSOLE
 
 #define CONFIG_PLATFORM_SETTINGS_INIT
+#ifndef __ASSEMBLY__
+extern void getExtraBootArgs(char *extraBootargs, unsigned int extraBootargsLen);
+#endif
 #define CUSTOM_SHOW_USB_PROGRESS
 #define CUSTOM_SHOW_FATLOAD_PROGRESS
+#ifndef __ASSEMBLY__
+extern void custom_usb_show_progress(void);
+extern void custom_fatload_show_start(void);
+extern void custom_fatload_show_end(void);
+#endif
 
 /*-----------------------------------------------------------------------
  *	Switch settings to select between the SoC's main 3 boot-modes:

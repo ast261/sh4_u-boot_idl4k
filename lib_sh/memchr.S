@@ -25,3 +25,5 @@ ENTRY(memchr)
 2:	mov	#0,r4
 3:	rts
 	 mov	r4,r0
+
+	.section .note.GNU-stack,"",@progbits

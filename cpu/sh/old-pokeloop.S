@@ -167,3 +167,5 @@ delay:	mov	#1,r0		/* small delay after EACH opcode */
 	cmp/eq	#0, r0
 	bf	2b
 	bt	poke_loop
+
+	.section .note.GNU-stack,"",@progbits

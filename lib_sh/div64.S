@@ -44,3 +44,5 @@ ENTRY(__xdiv64_32)
 	rts
 	 mov	r2, r0
 #endif
+
+	.section .note.GNU-stack,"",@progbits
