@@ -46,6 +46,8 @@ U-Boot runs from SPI serial flash (MX25L8006E), mapped at offset 0 with 512 KiB 
 
 The `eeprom` command is the ST40 abstraction for SPI flash access (device address is implicit).
 
+**USB port:** U-Boot only initialises USB #0 (`CFG_USB_BASE = CFG_USB0_BASE` in `include/configs/idl4k.h`), which is the **upper** USB port. Confirmed from Linux, where a stick in the upper port enumerates on `stm-ehci.0` (`0xfe0ffe00`). Sticks in the other ports are not visible to U-Boot. If `usb start` reports `0 Storage Device(s) found`, read the root-hub port status with `md.l fe0ffc54 1`: bit 8 = port powered, bit 0 = device connected, bit 3 = overcurrent.
+
 **From the U-Boot prompt:**
 
 ```
