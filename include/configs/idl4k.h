@@ -243,9 +243,9 @@ extern void custom_fatload_show_end(void);
 #define CONFIG_USB_OHCI_NEW
 #define CONFIG_USB_STORAGE
 #define CFG_USB_OHCI_CPU_INIT
-#define CFG_USB0_BASE			0xfe000000	/* #0 is rear, next to E-SATA */
-#define CFG_USB1_BASE			0xfe100000	/* #1 is rear, next to HDMI */
-#define CFG_USB2_BASE			0xfe200000	/* #2 is front port */
+#define CFG_USB0_BASE			0xfe000000	/* #0 is the upper port */
+#define CFG_USB1_BASE			0xfe100000	/* #1 is the lower port */
+#define CFG_USB2_BASE			0xfe200000	/* #2 is front port (unverified) */
 #define CFG_USB_BASE			CFG_USB0_BASE
 #define CFG_USB_OHCI_REGS_BASE		(CFG_USB_BASE+0xffc00)
 #define CFG_USB_OHCI_SLOT_NAME		"ohci"
