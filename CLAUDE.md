@@ -46,7 +46,7 @@ U-Boot runs from SPI serial flash (MX25L8006E), mapped at offset 0 with 512 KiB 
 
 The `eeprom` command is the ST40 abstraction for SPI flash access (device address is implicit).
 
-**USB port:** U-Boot's OHCI driver handles only one controller, selected by `CFG_USB_BASE` in `include/configs/idl4k.h`. On `master` it is USB #0 (`CFG_USB0_BASE`), the **upper** port. Port mapping, confirmed from Linux: upper port = USB #0 (`stm-ehci.0`, `0xfe0ffe00`), lower port = USB #1 (`stm-ehci.1`, `0xfe1ffe00`). USB #2 (`0xfe200000`) is assumed to be the front port but is unverified. Sticks in the other ports are not visible to U-Boot. The branch `idl4k-usb-lower-port` selects USB #1 instead, for boards whose upper socket has a loose contact. If `usb start` reports `0 Storage Device(s) found`, read the root-hub port status with `md.l fe0ffc54 1` (USB #1: `fe1ffc54`): bit 8 = port powered, bit 0 = device connected, bit 3 = overcurrent.
+**USB port:** U-Boot's OHCI driver handles only one controller, selected by `CFG_USB_BASE` in `include/configs/idl4k.h`. On this branch (`idl4k-usb-lower-port`) it is USB #1 (`CFG_USB1_BASE`), the **lower** port, because the upper port's socket has a loose contact; `master` uses USB #0, the upper port. Port mapping, confirmed from Linux: upper port = USB #0 (`stm-ehci.0`, `0xfe0ffe00`), lower port = USB #1 (`stm-ehci.1`, `0xfe1ffe00`). USB #2 (`0xfe200000`) is assumed to be the front port but is unverified. Sticks in the other ports are not visible to U-Boot. If `usb start` reports `0 Storage Device(s) found`, read the root-hub port status with `md.l fe1ffc54 1` (USB #0: `fe0ffc54`): bit 8 = port powered, bit 0 = device connected, bit 3 = overcurrent.
 
 **From the U-Boot prompt:**
 
